@@ -18,6 +18,7 @@ import (
 
 var processors = []processor{
 	patchExternalController, // must before patchOverride, so we only apply ExternalController in Override settings
+	patchSmartAdapt,         // convert url-test/fallback/load-balance to smart before user overrides, so override still wins
 	patchOverride,
 	patchGeneral,
 	patchProfile,
