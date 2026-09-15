@@ -145,13 +145,16 @@ subprojects {
 
         signingConfigs {
             val keystore = rootProject.file("signing.properties")
-            if (keystore.exists()) {
+            val keystoreBin = rootProject.file("release.keystore")
+            // require both the properties and the actual keystore file, so CI runs
+            // without signing secrets fall back to an unsigned APK instead of failing
+            if (keystore.exists() && keystoreBin.exists()) {
                 create("release") {
                     val prop = Properties().apply {
                         keystore.inputStream().use(this::load)
                     }
 
-                    storeFile = rootProject.file("release.keystore")
+                    storeFile = keystoreBin
                     storePassword = prop.getProperty("keystore.password")!!
                     keyAlias = prop.getProperty("key.alias")!!
                     keyPassword = prop.getProperty("key.password")!!
@@ -163,7 +166,7 @@ subprojects {
             named("release") {
                 isMinifyEnabled = isApp
                 isShrinkResources = isApp
-                signingConfig = signingConfigs.findByName("release") ?: signingConfigs["debug"]
+                signingConfig = signingConfigs.findByName("release")
                 proguardFiles(
                     getDefaultProguardFile("proguard-android-optimize.txt"),
                     "proguard-rules.pro"
