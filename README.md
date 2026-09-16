@@ -6,7 +6,7 @@
 
 | 改动 | 说明 |
 |---|---|
-| smart 内核 | 子模块指向 `vernesong/mihomo@Alpha`(固定 `4bc3d49`),支持 `type: smart` 策略组、LightGBM 权重预测、节点权重排行 |
+| smart 内核 | 子模块指向 `vernesong/mihomo@Alpha`,**每日自动跟随上游最新提交**(初始基线 `4bc3d49`),支持 `type: smart` 策略组、LightGBM 权重预测、节点权重排行 |
 | 自动转换 | 启动配置时把 `url-test` / `fallback` / `load-balance` 组原地转成 `smart`(组名/成员/规则引用不动,`select` 组不碰);实现在 `core/src/main/golang/native/config/smart_adapt.go` |
 | 内置模型 | `Model.bin`(vernesong 官方 LightGBM-Model,9.3MB)通过 `go:embed` 打进 `libclash.so`,启动时自动安装到内核目录;转换的组自动带 `uselightgbm: true`,无首次下载依赖 |
 | 状态面板 | 主界面新增「Smart 运行状态」:内置 WebView 仪表盘(`app/src/main/assets/smart.html`),读取内核权重排行(`GET /group/{name}/weights`),内核自动在 `127.0.0.1:9090` 开 RESTful 控制器(仅回环) |

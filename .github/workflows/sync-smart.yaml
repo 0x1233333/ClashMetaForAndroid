@@ -34,9 +34,17 @@ jobs:
           # -X ours: 冲突行(如版本号)保留本分支,其余上游改动正常吸收
           if git merge upstream/main --no-edit -X ours; then
             echo "merged=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::error::上游合并失败,需要手动处理:git fetch upstream main && git merge upstream/main"
+          elif git diff --name-only --diff-filter=U | grep -vqx 'core/src/foss/golang/clash'; then
+            git merge --abort
+            echo "::error::存在无法自动解决的冲突,需要手动处理"
             exit 1
+          else
+            # 子模块 gitlink 冲突:上游推他们的内核指针,我们永远保留 smart 内核
+            OUR=$(git ls-files -u core/src/foss/golang/clash | awk '$3=="2"{print $2; exit}')
+            git update-index --cacheinfo 160000,"$OUR",core/src/foss/golang/clash
+            git add core/src/foss/golang/clash
+            git commit --no-edit
+            echo "merged=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Update smart kernel submodule to vernesong Alpha HEAD
@@ -68,9 +76,10 @@ jobs:
           cd "$(go env GOROOT)"
           for p in "$GITHUB_WORKSPACE"/.github/patch/*.patch; do patch --verbose -p 1 < "$p"; done
 
-      - name: go mod tidy
+      - name: Re-checkout pinned kernel then go mod tidy
         if: steps.merge.outputs.merged == 'true' || steps.kernel.outputs.kernel_changed == 'true'
         run: |
+          git submodule update --init --recursive --force
           cd core/src/foss/golang && go mod tidy
           cd ../../main/golang && go mod tidy
 
