@@ -183,6 +183,11 @@
             android:exported="false"
             android:label="@string/help" />
         <activity
+            android:name=".SmartStatusActivity"
+            android:configChanges="uiMode|orientation|screenSize|keyboardHidden"
+            android:exported="false"
+            android:label="@string/smart_status" />
+        <activity
             android:name=".FilesActivity"
             android:configChanges="uiMode"
             android:exported="false"
