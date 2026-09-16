@@ -2,6 +2,7 @@ package config
 
 import (
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -68,12 +69,45 @@ func patchSmartController(cfg *config.RawConfig, _ string) error {
 	return nil
 }
 
+// smartTuning carries optional per-app smart preferences, read from the
+// persist override JSON (Settings → Override) as:
+//
+//	{"smart-options": {"tolerance": 50, "policy-priority": "pattern:2.0;...", "sample-rate": 0.5, "collectdata": true}}
+//
+// It is applied to every converted group; patchOverride still runs later and
+// a full proxy-groups override can always replace the result.
+type smartTuning struct {
+	Tolerance      uint16  `json:"tolerance"`
+	PolicyPriority string  `json:"policy-priority"`
+	SampleRate     float64 `json:"sample-rate"`
+	CollectData    *bool   `json:"collectdata"`
+}
+
+func readSmartTuning() smartTuning {
+	var raw struct {
+		SmartOptions *smartTuning `json:"smart-options"`
+	}
+	content := ReadOverride(OverrideSlotPersist)
+	if content == "" {
+		return smartTuning{}
+	}
+	if err := json.Unmarshal([]byte(content), &raw); err != nil {
+		return smartTuning{}
+	}
+	if raw.SmartOptions == nil {
+		return smartTuning{}
+	}
+	log.Infoln("[SmartAdapt] applying smart-options from override: %+v", *raw.SmartOptions)
+	return *raw.SmartOptions
+}
+
 func patchSmartAdapt(cfg *config.RawConfig, _ string) error {
 	if !smartAdaptEnabled || cfg == nil || len(cfg.ProxyGroup) == 0 {
 		return nil
 	}
 
 	ensureSmartModel()
+	tuning := readSmartTuning()
 
 	converted := make([]string, 0, len(cfg.ProxyGroup))
 
@@ -89,6 +123,21 @@ func patchSmartAdapt(cfg *config.RawConfig, _ string) error {
 		// Never enable prefer-asn implicitly: a missing ASN.mmdb adds a startup
 		// network dependency (GitHub download) that can stall startup for ~80s.
 		delete(g, "prefer-asn")
+
+		// user tuning from the persist override file, e.g.
+		// {"smart-options": {"tolerance": 50, "policy-priority": "IEPL:2.0;家宽:0.5"}}
+		if tuning.Tolerance > 0 {
+			g["tolerance"] = tuning.Tolerance
+		}
+		if tuning.PolicyPriority != "" {
+			g["policy-priority"] = tuning.PolicyPriority
+		}
+		if tuning.SampleRate > 0 {
+			g["sample-rate"] = tuning.SampleRate
+		}
+		if tuning.CollectData != nil && *tuning.CollectData {
+			g["collectdata"] = true
+		}
 
 		name, _ := g["name"].(string)
 		converted = append(converted, fmt.Sprintf("%s(%s→smart)", name, t))

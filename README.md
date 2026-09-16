@@ -30,6 +30,30 @@
    ```
 4. `./gradlew app:assembleMetaRelease` → `app/build/outputs/apk/meta/release/`
 
+## 调节"流量集中 vs 稳定"的平衡
+
+smart 收敛后会把流量集中到最优节点,这是设计行为。想按自己的偏好微调,在 **App 设置 → 覆写** 里加一段 `smart-options`(会对所有自动转换的组生效,改完重载配置即可,**无需重新构建**):
+
+```json
+{
+  "smart-options": {
+    "tolerance": 50,
+    "policy-priority": "IEPL|专线:2.0;BGP:1.2;家宽:0.5",
+    "sample-rate": 0.5,
+    "collectdata": true
+  }
+}
+```
+
+| 选项 | 语义(已读内核源码确认) |
+|---|---|
+| `tolerance` | 毫秒。延迟差在该范围内的节点视为等同,防止在近延迟节点间来回抖动;调大=更"粘" |
+| `policy-priority` | `节点名模式:系数`,分号分隔,支持正则。>1 提权、<1 降权——把稳定节点调高、抖动节点调低的直接手段 |
+| `sample-rate` | 0~1,**只影响学习样本采样率,不影响流量分配**(别拿它调平衡) |
+| `collectdata` | 收集连接样本到本地 CSV(供离线训练模型),会增加一些存储占用 |
+
+注意:内核的权重本身已把"失败/丢包"计入,不稳定节点用久了权重自然下降、甚至被临时拉黑;`policy-priority` 是在次之上表达你的主观偏好。
+
 ## CI
 
 `.github/workflows/build-release.yaml`(来自上游)支持 `workflow_dispatch`,输入 `release-tag`(格式 `vX.Y.Z`,须未被占用)即可自动构建并发 Release(未签名 APK)。仓库需开启 Settings → Actions → Workflow permissions → **Read and write**。
