@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   sync:
@@ -117,6 +118,7 @@ jobs:
         if: steps.push.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           gh workflow run build-release.yaml --ref smart -f release-tag="${{ steps.tag.outputs.tag }}"
           echo "dispatched build for ${{ steps.tag.outputs.tag }}"
