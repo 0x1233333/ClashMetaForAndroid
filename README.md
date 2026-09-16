@@ -1,87 +1,41 @@
-## Clash Meta for Android
+# Clash Meta for Android · Smart 版
 
-A Graphical user interface of [Clash.Meta](https://github.com/MetaCubeX/Clash.Meta) for Android
+基于 [MetaCubeX/ClashMetaForAndroid](https://github.com/MetaCubeX/ClashMetaForAndroid) 的定制分支:内核换成 [vernesong/mihomo](https://github.com/vernesong/mihomo)(Alpha)smart 内核,并让**标准订阅零改动自动获得 smart 策略组 + LightGBM 模型**。
 
-### Feature
+## 这个分支做了什么
 
-Feature of [Clash.Meta](https://github.com/MetaCubeX/Clash.Meta)
+| 改动 | 说明 |
+|---|---|
+| smart 内核 | 子模块指向 `vernesong/mihomo@Alpha`(固定 `4bc3d49`),支持 `type: smart` 策略组、LightGBM 权重预测、节点权重排行 |
+| 自动转换 | 启动配置时把 `url-test` / `fallback` / `load-balance` 组原地转成 `smart`(组名/成员/规则引用不动,`select` 组不碰);实现在 `core/src/main/golang/native/config/smart_adapt.go` |
+| 内置模型 | `Model.bin`(vernesong 官方 LightGBM-Model,9.3MB)通过 `go:embed` 打进 `libclash.so`,启动时自动安装到内核目录;转换的组自动带 `uselightgbm: true`,无首次下载依赖 |
+| 状态面板 | 主界面新增「Smart 运行状态」:内置 WebView 仪表盘(`app/src/main/assets/smart.html`),读取内核权重排行(`GET /group/{name}/weights`),内核自动在 `127.0.0.1:9090` 开 RESTful 控制器(仅回环) |
+| 兼容性 | 包名 `com.github.metacubex.clash.smart`,与官方 CMFA 共存;无密钥环境构建时输出未签名 APK |
 
-[<img src="https://fdroid.gitlab.io/artwork/badge/get-it-on.png"
-     alt="Get it on F-Droid"
-     height="80">](https://f-droid.org/packages/com.github.metacubex.clash.meta/)
+## 使用
 
-### Requirement
+1. 安装 Release 里的 APK(未签名包需自行签名;`*-signed.apk` 可直接装)。
+2. 导入你原来的订阅,**不用改任何内容**。
+3. 启动 VPN,主界面点「Smart 运行状态」查看节点权重排行(约 5 分钟出第一份数据;学习期排名波动属正常)。
+4. 日志页可看 `[SmartAdapt]` / `[Smart]` 输出;把日志等级调到 Debug 可见每条连接的权重来源(`Model: [LightGBM]` = 模型预测)。
 
-- Android 5.0+ (minimum)
-- Android 7.0+ (recommend)
-- `armeabi-v7a` , `arm64-v8a`, `x86` or `x86_64` Architecture
+## 构建
 
-### Build
-
-1. Update submodules
-
-   ```bash
-   git submodule update --init --recursive
-   ```
-
-2. Install **OpenJDK 11**, **Android SDK**, **CMake** and **Golang**
-
-3. Create `local.properties` in project root with
-
+1. `git submodule update --init --recursive`
+2. JDK 17+、Android SDK(NDK 由 AGP 自动安装)、Go ≥1.26(**建议** [MetaCubeX 补丁版 Go](https://github.com/MetaCubeX/go/releases/tag/build),含 Android 运行时修复)
+3. `local.properties`(可选):
    ```properties
-   sdk.dir=/path/to/android-sdk
-   ```
-
-4. (Optional) Custom app package name. Add the following configuration to `local.properties`.
-
-   ```properties
-   # config your ownn applicationId, or it will be 'com.github.metacubex.clash'
-   custom.application.id=com.my.compile.clash
-   # remove application id suffix, or the applicaion id will be 'com.github.metacubex.clash.alpha'
+   custom.application.id=com.github.metacubex.clash.smart
    remove.suffix=true
-
-5. Create `signing.properties` in project root with
-
-   ```properties
-   keystore.path=/path/to/keystore/file
-   keystore.password=<key store password>
-   key.alias=<key alias>
-   key.password=<key password>
    ```
+4. `./gradlew app:assembleMetaRelease` → `app/build/outputs/apk/meta/release/`
 
-6. Build
+## CI
 
-   ```bash
-   ./gradlew app:assembleAlphaRelease
-   ```
+`.github/workflows/build-release.yaml`(来自上游)支持 `workflow_dispatch`,输入 `release-tag`(格式 `vX.Y.Z`,须未被占用)即可自动构建并发 Release(未签名 APK)。仓库需开启 Settings → Actions → Workflow permissions → **Read and write**。
 
-### Automation
+## 致谢与许可
 
-APP package name is `com.github.metacubex.clash.meta`
-
-- Toggle Clash.Meta service status
-  - Send intent to activity `com.github.kr328.clash.ExternalControlActivity` with action `com.github.metacubex.clash.meta.action.TOGGLE_CLASH`
-- Start Clash.Meta service
-  - Send intent to activity `com.github.kr328.clash.ExternalControlActivity` with action `com.github.metacubex.clash.meta.action.START_CLASH`
-- Stop Clash.Meta service
-  - Send intent to activity `com.github.kr328.clash.ExternalControlActivity` with action `com.github.metacubex.clash.meta.action.STOP_CLASH`
-- Import a profile
-  - URL Scheme `clash://install-config?url=<encoded URI>` or `clashmeta://install-config?url=<encoded URI>`
-
-### Contribution and Project Maintenance
-
-#### Meta Kernel
-
-- CMFA uses the kernel from `android-real` branch under `MetaCubeX/Clash.Meta`, which is a merge of the main `Alpha` branch and `android-open`.
-  - If you want to contribute to the kernel, make PRs to `Alpha` branch of the Meta kernel repository.
-  - If you want to contribute Android-specific patches to the kernel, make PRs to  `android-open` branch of the Meta kernel repository.
-
-#### Maintenance
-
-- When `MetaCubeX/Clash.Meta` kernel is updated to a new version, the `Update Dependencies` actions in this repo will be triggered automatically.
-  - It will pull the new version of the meta kernel, update all the golang dependencies, and create a PR without manual intervention.
-  - If there is any compile error in PR, you need to fix it before merging. Alternatively, you may merge the PR directly.
-- Manually triggering `Build Pre-Release` actions will compile and publish a `PreRelease` version.
-- Manually triggering `Build Release` actions will compile, tag and publish a `Release` version.
-  - You must fill the blank `Release Tag` with the tag you want to release in the format of `v1.2.3`.
-  - `versionName` and `versionCode` in `build.gradle.kts` will be automatically bumped to the tag you filled above.
+- [kr328](https://github.com/kr328) 及 [MetaCubeX](https://github.com/MetaCubeX) 的 ClashMetaForAndroid
+- [vernesong](https://github.com/vernesong) 的 OpenClash / mihomo smart 内核 / LightGBM 模型
+- 许可证沿用上游([AGPL-3.0](COPYING.txt) 等),本分支改动同样以 AGPL-3.0 开源
