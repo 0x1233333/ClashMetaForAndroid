@@ -146,18 +146,18 @@ subprojects {
         signingConfigs {
             val keystore = rootProject.file("signing.properties")
             val keystoreBin = rootProject.file("release.keystore")
-            // require both the properties and the actual keystore file, so CI runs
-            // without signing secrets fall back to an unsigned APK instead of failing
-            if (keystore.exists() && keystoreBin.exists()) {
+            val prop = Properties()
+            if (keystore.exists()) {
+                keystore.inputStream().use(prop::load)
+            }
+            // enable release signing only when a real keystore AND a non-blank password
+            // exist; CI runs without signing secrets then produce an unsigned APK
+            if (keystoreBin.exists() && !prop.getProperty("keystore.password").isNullOrBlank()) {
                 create("release") {
-                    val prop = Properties().apply {
-                        keystore.inputStream().use(this::load)
-                    }
-
                     storeFile = keystoreBin
-                    storePassword = prop.getProperty("keystore.password")!!
-                    keyAlias = prop.getProperty("key.alias")!!
-                    keyPassword = prop.getProperty("key.password")!!
+                    storePassword = prop.getProperty("keystore.password")
+                    keyAlias = prop.getProperty("key.alias")
+                    keyPassword = prop.getProperty("key.password")
                 }
             }
         }
