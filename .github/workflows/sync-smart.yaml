@@ -31,10 +31,11 @@ jobs:
         run: |
           git remote add upstream https://github.com/MetaCubeX/ClashMetaForAndroid.git
           git fetch upstream main
-          if git merge upstream/main --no-edit; then
+          # -X ours: 冲突行(如版本号)保留本分支,其余上游改动正常吸收
+          if git merge upstream/main --no-edit -X ours; then
             echo "merged=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::error::上游合并冲突,需要手动解决:git fetch upstream main && git merge upstream/main"
+            echo "::error::上游合并失败,需要手动处理:git fetch upstream main && git merge upstream/main"
             exit 1
           fi
 
