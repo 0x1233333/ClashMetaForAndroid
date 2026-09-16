@@ -52,6 +52,22 @@ func ensureSmartModel() {
 	}
 }
 
+func patchSmartController(cfg *config.RawConfig, _ string) error {
+	if cfg == nil {
+		return nil
+	}
+
+	// Expose the RESTful controller on loopback so the bundled Smart status
+	// dashboard (app/assets/smart.html) can read group weights. Runs before
+	// patchOverride, so a user override can still replace or disable it.
+	if cfg.ExternalController == "" {
+		cfg.ExternalController = "127.0.0.1:9090"
+		cfg.ExternalControllerUnix = ""
+	}
+
+	return nil
+}
+
 func patchSmartAdapt(cfg *config.RawConfig, _ string) error {
 	if !smartAdaptEnabled || cfg == nil || len(cfg.ProxyGroup) == 0 {
 		return nil

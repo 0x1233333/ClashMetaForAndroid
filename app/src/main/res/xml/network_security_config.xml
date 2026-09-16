@@ -7,4 +7,9 @@
             <certificates src="user" />
         </trust-anchors>
     </base-config>
+    <!-- loopback RESTful controller used by the bundled Smart status dashboard -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
 </network-security-config>
