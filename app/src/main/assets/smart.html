@@ -118,15 +118,17 @@ async function loadWeights() {
   box.innerHTML = '<div class="banner"><span class="spin"></span> 加载中…</div>';
   try {
     const d = await jget("/group/" + encodeURIComponent(current) + "/weights");
-    const list = (d.result || []);
+    // kernel returns {"weights":[{Name,Rank,Weight}...]} (message when empty)
+    const list = (d.weights || d.result || []);
     const max = Math.max(1e-6, ...list.map(i => Math.abs(i.Weight || 0)));
-    const upd = d.last_updated ? new Date(d.last_updated * 1000).toLocaleString() : "—";
+    const upd = d.last_updated ? new Date(d.last_updated * 1000).toLocaleString() : null;
     const now = (await jget("/group/" + encodeURIComponent(current)).then(g => g.now).catch(() => ""));
     let html = '<div class="card"><h2>' + esc(current)
       + (now ? '<span class="now-tag">当前 ' + esc(now) + "</span>" : "")
-      + '</h2><div class="meta">排行更新于 ' + esc(upd) + " · 共 " + list.length + " 个节点</div>";
+      + '</h2><div class="meta">' + (upd ? "排行更新于 " + esc(upd) + " · " : "") + "共 " + list.length + " 个节点</div>";
     if (!list.length) {
-      html += '<div class="meta">暂无数据:启动 VPN 后访问几个网页,内核就会开始为节点计分(约 5 分钟出第一份排行)。</div>';
+      html += '<div class="meta">' + esc(d.message || "暂无数据")
+        + '<br>内核每 5 分钟统计一次排行:启动 VPN、让流量走一会儿(打开几个网页),再回来看就有数据了。</div>';
     }
     for (const it of list) {
       const w = Math.abs(it.Weight || 0);
