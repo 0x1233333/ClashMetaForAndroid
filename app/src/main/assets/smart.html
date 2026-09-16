@@ -38,15 +38,24 @@
   .row .top { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 3px; }
   .row .name { color: var(--fg); word-break: break-all; }
   .row .val { color: var(--dim); font-variant-numeric: tabular-nums; }
-  .row .val .rank { color: var(--good); font-weight: 600; margin-right: 6px; }
+  .rank { font-weight: 600; margin-right: 6px; }
+  .rank.most { color: var(--good); }
+  .rank.occ { color: var(--acc); }
+  .rank.rare { color: var(--dim); }
   .bar-wrap { height: 6px; background: var(--card2); border-radius: 3px; overflow: hidden; }
   .bar { height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--acc), #7cc4ff); }
   .bar.now { background: linear-gradient(90deg, var(--good), #8ce8c1); }
   .now-tag {
     display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px;
-    font-size: 10px; background: rgba(62,207,142,.15); color: var(--good);
+    font-size: 10px; background: rgba(62,207,142,.15); color: var(--good); vertical-align: 1px;
   }
-  .foot { color: var(--dim); font-size: 11px; margin-top: 18px; line-height: 1.7; }
+  details.unused { margin-top: 10px; }
+  details.unused summary { color: var(--dim); font-size: 12px; cursor: pointer; }
+  .unused-list {
+    margin-top: 8px; color: var(--dim); font-size: 12px; line-height: 1.9;
+    max-height: 180px; overflow-y: auto; word-break: break-all;
+  }
+  .foot { color: var(--dim); font-size: 11px; margin-top: 18px; line-height: 1.8; }
   .spin {
     display: inline-block; width: 12px; height: 12px; border: 2px solid var(--line);
     border-top-color: var(--acc); border-radius: 50%; animation: r 1s linear infinite; vertical-align: -2px;
@@ -60,12 +69,19 @@
 <div id="content"><div class="banner"><span class="spin"></span> 正在连接本地内核…</div></div>
 <div class="foot">
   数据来自本机内核(127.0.0.1:9090),每 15 秒自动刷新。<br>
-  权重排行由内核每 5 分钟统计一次;学习期(前几天)排名波动属正常现象。<br>
-  若提示无法连接:请先在主界面启动 VPN,并确认正在使用代理(内核需处于运行状态)。
+  排行只收录<b>内核实际选用过的节点</b>:smart 学会最优节点后会集中用它,所以通常只有少数节点有分,这是正常现象;未被选用的节点会在下方"未进入排行"里列出。<br>
+  排行每 5 分钟统计一次;学习期(前几天)排名波动属正常。
 </div>
 <script>
 const BASE = "http://127.0.0.1:9090";
-let groups = [], current = null, timer = null;
+let groups = [], current = null;
+
+const RANK_CN = { "MostUsed": "最常用", "OccasionalUsed": "偶尔使用", "RarelyUsed": "很少使用" };
+const MSG_CN = {
+  "No weight data available for the specified group": "暂无权重数据:内核还没为这个组选出节点",
+  "Not a Smart group": "该组不是 Smart 组",
+  "Smart cache not available": "内核缓存不可用"
+};
 
 async function jget(path) {
   const r = await fetch(BASE + path, {cache: "no-store"});
@@ -74,6 +90,9 @@ async function jget(path) {
 }
 
 function esc(s) { return (s + "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function rankCN(s) { return RANK_CN[s] || (s ? s : ""); }
+function rankCls(s) { return s === "MostUsed" ? "most" : (s === "OccasionalUsed" ? "occ" : "rare"); }
+function msgCN(s) { return MSG_CN[s] || ("内核提示:" + s); }
 
 function banner(html) {
   document.getElementById("content").innerHTML = '<div class="banner">' + html + "</div>";
@@ -96,15 +115,14 @@ async function loadGroups() {
   groups = all.filter(g => (g.type || "").toLowerCase() === "smart");
   if (current == null || !groups.some(g => g.name === current))
     current = groups.length ? groups[0].name : null;
-  renderTabs();
 }
 
 function renderTabs() {
-  const tabs = groups.map(g =>
+  const el = document.getElementById("tabs");
+  if (!el) return;
+  el.innerHTML = groups.map(g =>
     '<div class="tab' + (g.name === current ? " on" : "") + '" onclick="pick(' + JSON.stringify(g.name).replace(/"/g, "&quot;") + ')">'
     + esc(g.name) + "</div>").join("");
-  document.getElementById("tabs") &&
-    (document.getElementById("tabs").innerHTML = tabs);
 }
 
 window.pick = function(name) { current = name; renderTabs(); loadWeights(); };
@@ -117,33 +135,49 @@ async function loadWeights() {
   }
   box.innerHTML = '<div class="banner"><span class="spin"></span> 加载中…</div>';
   try {
-    const d = await jget("/group/" + encodeURIComponent(current) + "/weights");
-    // kernel returns {"weights":[{Name,Rank,Weight}...]} (message when empty)
-    const list = (d.weights || d.result || []);
-    const max = Math.max(1e-6, ...list.map(i => Math.abs(i.Weight || 0)));
-    const upd = d.last_updated ? new Date(d.last_updated * 1000).toLocaleString() : null;
-    const now = (await jget("/group/" + encodeURIComponent(current)).then(g => g.now).catch(() => ""));
+    const enc = encodeURIComponent(current);
+    const g = await jget("/group/" + enc);
+    const nowRaw = g.now || "";
+    const now = (nowRaw.indexOf("Select") >= 0 ? "" : nowRaw); // "Smart - Select" = 自动选择,不在节点上标注
+    const allNodes = g.all || [];
+    let d;
+    try {
+      d = await jget("/group/" + enc + "/weights");
+    } catch (e2) {
+      box.innerHTML = '<div class="banner"><b>读取权重失败:</b> ' + esc(e2.message) + "<br>稍后自动重试。</div>";
+      return;
+    }
+    const ranked = (d.weights || d.result || []);
+    const rankedNames = new Set(ranked.map(i => i.Name));
+    const unused = allNodes.filter(n => !rankedNames.has(n));
+
     let html = '<div class="card"><h2>' + esc(current)
       + (now ? '<span class="now-tag">当前 ' + esc(now) + "</span>" : "")
-      + '</h2><div class="meta">' + (upd ? "排行更新于 " + esc(upd) + " · " : "") + "共 " + list.length + " 个节点</div>";
-    if (!list.length) {
-      html += '<div class="meta">' + esc(d.message || "暂无数据")
+      + '</h2><div class="meta">组内共 ' + allNodes.length + " 个节点 · 有排行数据 " + ranked.length + " 个</div>";
+
+    if (!ranked.length) {
+      html += '<div class="meta">' + esc(d.message ? msgCN(d.message) : "暂无数据")
         + '<br>内核每 5 分钟统计一次排行:启动 VPN、让流量走一会儿(打开几个网页),再回来看就有数据了。</div>';
     }
-    for (const it of list) {
-      const w = Math.abs(it.Weight || 0);
-      const pct = Math.max(2, Math.round(w / max * 100));
+    for (const it of ranked) {
+      const w = Math.max(0, Math.min(100, it.Weight || 0));
       const isNow = it.Name === now;
       html += '<div class="row"><div class="top"><span class="name">' + esc(it.Name)
         + (isNow ? '<span class="now-tag">当前使用</span>' : "")
-        + '</span><span class="val"><span class="rank">' + esc(it.Rank || "")
-        + "</span>" + (w || 0).toFixed(4) + '</span></div><div class="bar-wrap"><div class="bar'
-        + (isNow ? " now" : "") + '" style="width:' + pct + '%"></div></div></div>';
+        + '</span><span class="val"><span class="rank ' + rankCls(it.Rank) + '">' + esc(rankCN(it.Rank))
+        + '</span>' + w.toFixed(1) + '</span></div><div class="bar-wrap"><div class="bar'
+        + (isNow ? " now" : "") + '" style="width:' + Math.max(2, w) + '%"></div></div></div>';
     }
+
+    if (unused.length) {
+      html += '<details class="unused"><summary>未进入排行的节点(' + unused.length
+        + '个)— 内核近期未选用它们,属正常现象,点开查看</summary><div class="unused-list">'
+        + unused.map(esc).join("<br>") + "</div></details>";
+    }
+
     box.innerHTML = html + "</div>";
   } catch (e) {
-    box.innerHTML = '<div class="banner"><b>读取失败:</b> ' + esc(e.message)
-      + "<br>请确认 VPN 已启动(内核运行中),稍后自动重试。</div>";
+    box.innerHTML = '<div class="banner"><b>读取失败:</b> ' + esc(e.message) + "<br>请确认 VPN 已启动(内核运行中),稍后自动重试。</div>";
   }
 }
 
@@ -162,7 +196,7 @@ async function tick() {
 
 loadMeta();
 tick();
-timer = setInterval(tick, 15000);
+setInterval(tick, 15000);
 </script>
 </body>
 </html>
