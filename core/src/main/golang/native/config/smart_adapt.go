@@ -65,6 +65,15 @@ func patchSmartController(cfg *config.RawConfig, _ string) error {
 	if cfg.ExternalController == "" {
 		cfg.ExternalController = "127.0.0.1:9090"
 		cfg.ExternalControllerUnix = ""
+		// Subscriptions built for router use often carry `secret:` and
+		// `external-controller-cors:` — both would 401/block the dashboard.
+		// This controller is loopback-only (same app UID on Android), so auth
+		// adds nothing here; drop both for our injected controller.
+		cfg.Secret = ""
+		cfg.ExternalControllerCors = config.RawCors{
+			AllowOrigins:        []string{"*"},
+			AllowPrivateNetwork: true,
+		}
 	}
 
 	return nil
