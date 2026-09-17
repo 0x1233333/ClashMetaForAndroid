@@ -215,7 +215,9 @@ async function loadWeights() {
     const upd = d.last_updated ? new Date(d.last_updated * 1000) : null;
     const cur = ranked.find(i => i.Name === now);
 
-    const pct = cur ? Math.max(0, Math.min(100, cur.Weight || 0)) : 0;
+    const topItem = ranked[0] || null;
+    const pct = topItem ? Math.max(0, Math.min(100, topItem.Weight || 0)) : 0;
+    const curIdx = cur ? ranked.indexOf(cur) + 1 : 0;
     const R = 46, C = (2 * Math.PI * R).toFixed(1);
     const dash = (C * pct / 100).toFixed(1);
     let html =
@@ -226,9 +228,14 @@ async function loadWeights() {
       + '<circle class="track" cx="54" cy="54" r="' + R + '" fill="none" stroke-width="9"/>'
       + '<circle class="fill" cx="54" cy="54" r="' + R + '" fill="none" stroke-width="9" '
       + 'stroke-dasharray="' + C + '" stroke-dashoffset="' + (C - dash) + '"/></svg>'
-      + '<div class="center"><div class="pct">' + (ranked.length ? Math.round(pct) + "分" : "—") + '</div><div class="lbl">当前节点权重</div></div></div>'
+      + '<div class="center"><div class="pct">' + (ranked.length ? Math.round(pct) + "分" : "—") + '</div><div class="lbl">组内最高权重</div></div></div>'
       + '<div class="hero-r"><div class="cap">当前使用节点</div><div class="now">'
       + (now ? esc(now) : '<span style="color:var(--dim)">自动选择中</span>') + "</div>"
+      + '<div class="cap" style="margin-top:-2px">'
+      + (cur
+          ? "当前节点评分 " + Math.round(Math.max(0, Math.min(100, cur.Weight || 0))) + " · 排名第 " + curIdx + " 位"
+          : (ranked.length ? "当前节点暂无评分(新学习或冷门节点)" : "评分统计生成中"))
+      + "</div>"
       + '<div class="stat-row">'
       + '<div class="stat"><div class="n">' + allNodes.length + '</div><div class="t">组内节点</div></div>'
       + '<div class="stat"><div class="n">' + ranked.length + '</div><div class="t">有排行数据</div></div>'
