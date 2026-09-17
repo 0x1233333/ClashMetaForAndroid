@@ -127,7 +127,7 @@
 </div>
 <div id="content"><div class="banner"><span class="spin"></span> 正在连接本地内核…</div></div>
 <div class="foot">
-  实时调度每 4 秒刷新:显示此刻各节点正在承载的连接与流量(同一分组多节点并行使用是 smart 的正常工作方式)。<br>
+  实时调度每 5 秒刷新:显示此刻各节点正在承载的连接与流量(同一分组多节点并行使用是 smart 的正常工作方式);切换分组瞬时完成。<br>
   累计排行由内核每 5 分钟统计一次,数据存在本机、按订阅隔离。
 </div>
 <script>
@@ -140,8 +140,12 @@ const MSG_CN = {
   "Smart cache not available": "内核缓存不可用"
 };
 const RANK_SHOW = 8;
+const LIVE_INTERVAL = 5000;
 let groups = [], current = null, syncing = false;
-let rankMap = {};
+let rankMaps = {};        // group -> 节点名:{Weight,Rank}(累计学习标签)
+let liveData = {};        // group -> {rows:[[node,agg]...], nodeCount, connCount, total}
+let lastConns = null;     // 原始连接缓存
+let fastBusy = false, lastFetchAt = 0;
 
 const $ = id => document.getElementById(id);
 const esc = s => (s + "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -168,7 +172,7 @@ async function loadMeta() {
     const v = await jget("/version");
     const mode = await jget("/configs").then(c => c.mode).catch(() => "?");
     const m = { rule: "规则分流", global: "全局", direct: "直连" };
-    // /version returns {"meta":true(布尔),"version":"..."} — never call methods on meta
+    // /version 的 meta 是布尔值,不要对它调字符串方法
     $("chip-core").textContent = "内核 " + (v.version || "");
     $("chip-mode").textContent = "模式 " + (m[mode] || mode);
   } catch (e) { $("chip-core").textContent = "未连接"; }
@@ -187,67 +191,96 @@ function renderTabs() {
     '<div class="tab' + (g.name === current ? " on" : "") + '" data-i="' + i + '">' + esc(g.name) + "</div>").join("");
 }
 
+/* 切换分组:有缓存数据就立即渲染(零等待),再后台刷新 */
+function selectGroup(i) {
+  current = groups[i].name;
+  renderTabs();
+  renderLive();
+  slowTick();
+}
+
 document.addEventListener("click", e => {
   const t = e.target.closest(".tab");
-  if (t) {
-    current = groups[+t.dataset.i].name;
-    const lv = $("live");
-    if (lv) lv.innerHTML = '<div class="banner"><span class="spin"></span> 切换中…</div>';
-    fastTick();
-  }
+  if (t) selectGroup(+t.dataset.i);
 });
 
-async function fastTick() {
-  if (!current) return;
-  let conns = [];
-  try {
-    const d = await jget("/connections");
-    conns = d.connections || [];
-    $("chip-mem").textContent = d.memory ? "内存 " + fmtBytes(d.memory) : "";
-  } catch (e) {
-    const p = $("live");
-    if (p) p.innerHTML = '<div class="banner"><b>无法连接本地内核 (127.0.0.1:9090)。</b><br>原因: ' + esc(e.message)
-      + "<br>请先在主界面启动 VPN;内核运行后本页会自动恢复。</div>";
-    return;
-  }
-  const map = new Map();
+/* 一次 /connections 聚合出所有 smart 分组的实时数据 */
+function aggregateAll(conns) {
+  const data = {};
+  for (const g of groups) data[g.name] = { map: new Map(), connCount: conns.length };
   for (const c of conns) {
     const ch = c.chains || [];
-    const gi = ch.lastIndexOf(current);
-    if (gi <= 0) continue;
-    const node = ch[gi - 1];
-    if (!node || node === current) continue;
-    let e = map.get(node);
-    if (!e) { e = { n: 0, up: 0, down: 0, hosts: [] }; map.set(node, e); }
-    e.n++; e.up += c.upload || 0; e.down += c.download || 0;
-    const md = c.metadata || {};
-    const h = md.host || md.sniffHost || md.destinationIP || "";
-    if (h && e.hosts.indexOf(h) < 0 && e.hosts.length < 3) e.hosts.push(h);
+    for (let gi = ch.length - 1; gi > 0; gi--) {
+      const grp = data[ch[gi]];
+      if (!grp) continue;
+      const node = ch[gi - 1];
+      if (!node || node === ch[gi]) break;
+      let e = grp.map.get(node);
+      if (!e) { e = { n: 0, up: 0, down: 0, hosts: [] }; grp.map.set(node, e); }
+      e.n++; e.up += c.upload || 0; e.down += c.download || 0;
+      const md = c.metadata || {};
+      const h = md.host || md.sniffHost || md.destinationIP || "";
+      if (h && e.hosts.indexOf(h) < 0 && e.hosts.length < 3) e.hosts.push(h);
+    }
   }
+  for (const name in data) {
+    const d = data[name];
+    d.rows = [...d.map.entries()].sort((a, b) => (b[1].up + b[1].down) - (a[1].up + a[1].down));
+    d.total = d.rows.reduce((s, e) => s + e[1].up + e[1].down, 0);
+  }
+  return data;
+}
+
+async function fastTick() {
+  if (fastBusy) return;
+  const now = Date.now();
+  if (now - lastFetchAt < 1200) { renderLive(); return; }
+  fastBusy = true;
+  try {
+    const d = await jget("/connections");
+    lastConns = d.connections || [];
+    $("chip-mem").textContent = d.memory ? "内存 " + fmtBytes(d.memory) : "";
+    lastFetchAt = Date.now();
+    liveData = aggregateAll(lastConns);
+    renderLive();
+  } catch (e) {
+    const live = $("live");
+    if (live) live.innerHTML = '<div class="banner"><b>无法连接本地内核 (127.0.0.1:9090)。</b><br>原因: ' + esc(e.message)
+      + "<br>请先在主界面启动 VPN;内核运行后本页会自动恢复。</div>";
+  }
+  fastBusy = false;
+}
+
+/* 渲染当前分组:纯用缓存,瞬时完成 */
+function renderLive() {
   const hero = $("hero"), live = $("live");
-  if (!live || !hero) return;
-  let totalT = 0;
-  for (const e of map.values()) totalT += e.up + e.down;
+  if (!live || !hero || !current) return;
+  const d = liveData[current];
+  if (!d) {
+    hero.innerHTML = "";
+    live.innerHTML = '<div class="banner"><span class="spin"></span> 正在获取该分组实时数据…</div>';
+    return;
+  }
   hero.innerHTML = '<div class="card"><div class="stat-row">'
-    + '<div class="stat"><div class="n">' + map.size + '</div><div class="t">活跃节点</div></div>'
-    + '<div class="stat"><div class="n">' + conns.length + '</div><div class="t">全部连接</div></div>'
-    + '<div class="stat"><div class="n">' + fmtBytes(totalT) + '</div><div class="t">组内累计流量</div></div>'
+    + '<div class="stat"><div class="n">' + d.map.size + '</div><div class="t">活跃节点</div></div>'
+    + '<div class="stat"><div class="n">' + d.connCount + '</div><div class="t">全部连接</div></div>'
+    + '<div class="stat"><div class="n">' + fmtBytes(d.total) + '</div><div class="t">组内累计流量</div></div>'
     + "</div></div>";
 
-  if (!map.size) {
+  if (!d.rows.length) {
     live.innerHTML = '<div class="banner">该分组此刻没有活跃连接——打开几个网站,这里就会实时显示各节点正在承载的流量与目标站点。</div>';
     return;
   }
-  const rows = [...map.entries()].sort((a, b) => (b[1].up + b[1].down) - (a[1].up + a[1].down));
-  const max = Math.max(1, rows[0][1].up + rows[0][1].down);
+  const max = Math.max(1, d.rows[0][1].up + d.rows[0][1].down);
+  const rk = rankMaps[current] || {};
   let s = '<div class="seclabel"><span class="l"><span class="live-dot"></span>实时调度</span>'
-    + '<span class="r">' + rows.length + ' 个节点在承载 · 4s 刷新</span></div><div class="card">';
-  rows.forEach(([name, e], i) => {
+    + '<span class="r">' + d.rows.length + ' 个节点在承载 · 5s 刷新</span></div><div class="card">';
+  d.rows.forEach(([name, e], i) => {
     const t = e.up + e.down;
-    const rk = rankMap[name];
+    const r = rk[name];
     s += '<div class="lrow"><div class="top"><span class="name"><span class="idx">' + (i + 1) + '.</span>'
       + "<span>" + esc(name) + "</span>"
-      + (rk ? '<span class="rank ' + rankCls(rk.Rank) + '">' + esc(rankCN(rk.Rank)) + "</span>" : "")
+      + (r ? '<span class="rank ' + rankCls(r.Rank) + '">' + esc(rankCN(r.Rank)) + "</span>" : "")
       + '</span><span class="val"><b>' + e.n + "</b> 条 · " + fmtBytes(t) + "</span></div>"
       + (e.hosts.length ? '<div class="sub">' + e.hosts.map(esc).join(" · ") + "</div>" : "")
       + '<div class="bar-wrap"><div class="bar" style="width:' + Math.max(2, Math.round(t / max * 100)) + '%"></div></div></div>';
@@ -257,23 +290,13 @@ async function fastTick() {
 
 async function slowTick() {
   try {
-    await loadGroups();
-    if (!$("tabs")) {
-      $("content").innerHTML = '<nav class="tabs" id="tabs"></nav><div id="hero"></div><div id="live"></div><div id="rank"></div>';
-    }
-    renderTabs();
     const rankEl = $("rank");
-    if (!rankEl) return;
-    if (!current) {
-      $("hero").innerHTML = "";
-      $("live").innerHTML = '<div class="banner">当前配置里没有 Smart 组。<br>导入标准订阅后,App 会自动把 url-test / fallback / load-balance 组转换成 smart;启动 VPN 并正常上网后,这里就会出现实时调度。</div>';
-      rankEl.innerHTML = "";
-      return;
-    }
+    if (!rankEl || !current) return;
     const d = await jget("/group/" + encodeURIComponent(current) + "/weights");
     const ranked = (d.weights || d.result || []);
-    rankMap = {};
-    for (const it of ranked) rankMap[it.Name] = it;
+    const rm = {};
+    for (const it of ranked) rm[it.Name] = it;
+    rankMaps[current] = rm;
     if (!ranked.length) {
       rankEl.innerHTML = '<details class="ranking"><summary>累计权重排行(每 5 分钟统计)</summary><div class="rank-body">'
         + '<div class="banner" style="margin:0">'
@@ -326,11 +349,12 @@ async function tick(manual) {
       $("content").innerHTML = '<nav class="tabs" id="tabs"></nav><div id="hero"></div><div id="live"></div><div id="rank"></div>';
     }
     renderTabs();
-    await slowTick();
     await fastTick();
+    await slowTick();
     $("chip-sync").textContent = "已同步 " + new Date().toLocaleTimeString("zh-CN", { hour12: false });
   } catch (e) {
-    banner("<b>无法连接本地内核 (127.0.0.1:9090)。</b><br>请先在主界面启动 VPN;内核运行后本页会自动恢复。");
+    banner("<b>无法连接本地内核 (127.0.0.1:9090)。</b><br>原因: " + esc(e.message)
+      + "<br>请先在主界面启动 VPN;内核运行后本页会自动恢复。");
   }
   syncing = false;
   if (btn) setTimeout(() => btn.classList.remove("spin"), 600);
@@ -338,7 +362,7 @@ async function tick(manual) {
 
 loadMeta();
 tick();
-setInterval(fastTick, 4000);
+setInterval(fastTick, LIVE_INTERVAL);
 setInterval(slowTick, 15000);
 setInterval(loadMeta, 30000);
 </script>
