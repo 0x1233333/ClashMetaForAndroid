@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/metacubex/mihomo/component/profile/cachefile"
 	"github.com/metacubex/mihomo/config"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/log"
@@ -102,6 +103,13 @@ func readSmartTuning() smartTuning {
 }
 
 func patchSmartAdapt(cfg *config.RawConfig, _ string) error {
+	// CMFA forces Profile.StoreSelected=false, so without this call nothing
+	// initializes the cachefile DB and the smart store silently runs memory-only
+	// (all weights lost on every restart). Cache() is a once-guarded singleton;
+	// running it here — before any smart group calls GetSmartStore() — makes the
+	// store disk-backed. Data still flushes to disk every 5 minutes.
+	cachefile.Cache()
+
 	if !smartAdaptEnabled || cfg == nil || len(cfg.ProxyGroup) == 0 {
 		return nil
 	}
