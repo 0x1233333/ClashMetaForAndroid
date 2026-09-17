@@ -168,7 +168,8 @@ async function loadMeta() {
     const v = await jget("/version");
     const mode = await jget("/configs").then(c => c.mode).catch(() => "?");
     const m = { rule: "规则分流", global: "全局", direct: "直连" };
-    $("chip-core").textContent = "内核 " + (v.meta ? v.meta.split("-")[0] + " · " : "") + (v.version || "");
+    // /version returns {"meta":true(布尔),"version":"..."} — never call methods on meta
+    $("chip-core").textContent = "内核 " + (v.version || "");
     $("chip-mode").textContent = "模式 " + (m[mode] || mode);
   } catch (e) { $("chip-core").textContent = "未连接"; }
 }
@@ -205,7 +206,8 @@ async function fastTick() {
     $("chip-mem").textContent = d.memory ? "内存 " + fmtBytes(d.memory) : "";
   } catch (e) {
     const p = $("live");
-    if (p) p.innerHTML = '<div class="banner"><b>无法连接本地内核 (127.0.0.1:9090)。</b><br>请先在主界面启动 VPN;内核运行后本页会自动恢复。</div>';
+    if (p) p.innerHTML = '<div class="banner"><b>无法连接本地内核 (127.0.0.1:9090)。</b><br>原因: ' + esc(e.message)
+      + "<br>请先在主界面启动 VPN;内核运行后本页会自动恢复。</div>";
     return;
   }
   const map = new Map();
