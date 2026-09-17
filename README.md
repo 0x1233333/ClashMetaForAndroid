@@ -54,6 +54,14 @@ smart 收敛后会把流量集中到最优节点,这是设计行为。想按自�
 
 注意:内核的权重本身已把"失败/丢包"计入,不稳定节点用久了权重自然下降、甚至被临时拉黑;`policy-priority` 是在次之上表达你的主观偏好。
 
+## 内存占用设计
+
+- 权重数据**持久在硬盘**(App 私有目录 `cache.db`,bbolt),内存只放读缓存和最多 5 分钟的写队列;重启不丢(见 Release v2.11.46 说明)
+- 内核每 5 分钟按自身内存自适应:占用 >90% 时把每组保留记录压到 500 条,平时 500–5000 条浮动
+- LightGBM 模型常驻内存实测约 0 代价(空闲内核 RSS ~28MB,模型开/关无差异),不用的可用覆写 `uselightgbm: false` 关掉
+- 内核 Go 运行时已调优:GC 增长阈值 50%(默认 100%)+ 256MiB 软堆上限——高负载时优先多 GC 而不是涨 RSS
+- TUN 栈默认 `system`(比 gVisor 省内存);状态页 WebView 只在打开时占用,关闭即释放
+
 ## CI
 
 `.github/workflows/build-release.yaml`(来自上游)支持 `workflow_dispatch`,输入 `release-tag`(格式 `vX.Y.Z`,须未被占用)即可自动构建并发 Release(未签名 APK)。仓库需开启 Settings → Actions → Workflow permissions → **Read and write**。
