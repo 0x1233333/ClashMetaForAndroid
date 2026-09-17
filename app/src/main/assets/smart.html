@@ -204,8 +204,6 @@ async function loadWeights() {
   try {
     const enc = encodeURIComponent(current);
     const g = await jget("/group/" + enc);
-    const nowRaw = g.now || "";
-    const now = nowRaw.indexOf("Select") >= 0 ? "" : nowRaw;
     const allNodes = g.all || [];
     let d = {};
     try { d = await jget("/group/" + enc + "/weights"); } catch (e2) { d = { weights: [] }; }
@@ -213,11 +211,9 @@ async function loadWeights() {
     const rankedNames = new Set(ranked.map(i => i.Name));
     const unused = allNodes.filter(n => !rankedNames.has(n));
     const upd = d.last_updated ? new Date(d.last_updated * 1000) : null;
-    const cur = ranked.find(i => i.Name === now);
 
     const topItem = ranked[0] || null;
     const pct = topItem ? Math.max(0, Math.min(100, topItem.Weight || 0)) : 0;
-    const curIdx = cur ? ranked.indexOf(cur) + 1 : 0;
     const R = 46, C = (2 * Math.PI * R).toFixed(1);
     const dash = (C * pct / 100).toFixed(1);
     let html =
@@ -229,13 +225,9 @@ async function loadWeights() {
       + '<circle class="fill" cx="54" cy="54" r="' + R + '" fill="none" stroke-width="9" '
       + 'stroke-dasharray="' + C + '" stroke-dashoffset="' + (C - dash) + '"/></svg>'
       + '<div class="center"><div class="pct">' + (ranked.length ? Math.round(pct) + "分" : "—") + '</div><div class="lbl">组内最高权重</div></div></div>'
-      + '<div class="hero-r"><div class="cap">当前使用节点</div><div class="now">'
-      + (now ? esc(now) : '<span style="color:var(--dim)">自动选择中</span>') + "</div>"
-      + '<div class="cap" style="margin-top:-2px">'
-      + (cur
-          ? "当前节点评分 " + Math.round(Math.max(0, Math.min(100, cur.Weight || 0))) + " · 排名第 " + curIdx + " 位"
-          : (ranked.length ? "当前节点暂无评分(新学习或冷门节点)" : "评分统计生成中"))
-      + "</div>"
+      + '<div class="hero-r"><div class="cap">组内最优节点</div><div class="now">'
+      + (topItem ? esc(topItem.Name) : '<span style="color:var(--dim)">统计生成中</span>') + "</div>"
+      + '<div class="cap" style="margin-top:-2px">按域名/目标自动择优,多个节点可同时使用</div>'
       + '<div class="stat-row">'
       + '<div class="stat"><div class="n">' + allNodes.length + '</div><div class="t">组内节点</div></div>'
       + '<div class="stat"><div class="n">' + ranked.length + '</div><div class="t">有排行数据</div></div>'
@@ -251,7 +243,7 @@ async function loadWeights() {
       html += '<div class="podium">' + top.map((it, i) => {
         const w = Math.max(0, Math.min(100, it.Weight || 0));
         return '<div class="p"><div class="medal">' + medals[i] + "</div>"
-          + '<div class="nm">' + esc(it.Name) + (it.Name === now ? ' <span class="now-tag">当前</span>' : "") + "</div>"
+          + '<div class="nm">' + esc(it.Name) + "</div>"
           + '<div class="w">' + Math.round(w) + "</div>"
           + '<div class="ub"><i style="width:' + Math.max(4, w) + '%"></i></div></div>';
       }).join("") + "</div>";
@@ -260,8 +252,8 @@ async function loadWeights() {
       const visible = expanded ? rest : rest.slice(0, SHOW_DEFAULT);
       html += '<div class="seclabel"><span class="l">完整排行</span><span class="r">共 ' + ranked.length + " 个</span></div>";
       html += '<div class="card">';
-      ranked.slice(0, 3).forEach((it, i) => { html += rowHTML(it, i, now); });
-      visible.forEach((it, i) => { html += rowHTML(it, i + 3, now); });
+      ranked.slice(0, 3).forEach((it, i) => { html += rowHTML(it, i); });
+      visible.forEach((it, i) => { html += rowHTML(it, i + 3); });
       if (rest.length > SHOW_DEFAULT && !expanded)
         html += '<button class="more" id="more">展开其余 ' + (rest.length - SHOW_DEFAULT) + " 个节点</button>";
       if (unused.length)
@@ -276,14 +268,13 @@ async function loadWeights() {
   }
 }
 
-function rowHTML(it, i, now) {
+function rowHTML(it, i) {
   const w = Math.max(0, Math.min(100, it.Weight || 0));
-  const isNow = it.Name === now;
   return '<div class="row"><div class="top"><span class="name"><span class="idx">' + (i + 1) + ".</span>"
-    + "<span>" + esc(it.Name) + "</span>" + (isNow ? '<span class="now-tag">当前使用</span>' : "") + "</span>"
+    + "<span>" + esc(it.Name) + "</span>"
     + '<span class="val"><span class="rank ' + rankCls(it.Rank) + '">' + esc(rankCN(it.Rank))
     + "</span>" + Math.round(w) + '</span></div><div class="bar-wrap"><div class="bar'
-    + (isNow ? " now" : "") + '" style="width:' + Math.max(2, w) + '%"></div></div></div>';
+    + '" style="width:' + Math.max(2, w) + '%"></div></div></div>';
 }
 
 async function tick(manual) {
