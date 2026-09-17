@@ -10,6 +10,7 @@ import (
 
 	"github.com/metacubex/mihomo/common/yaml"
 	"github.com/metacubex/mihomo/config"
+	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/hub"
 	"github.com/metacubex/mihomo/log"
 )
@@ -74,6 +75,15 @@ func Load(path string) error {
 
 		return err
 	}
+
+	// Smart data isolation: the kernel derives its per-profile data keyspace name
+	// from the basename of C.Path.Config() (adapter/outboundgroup/smart.go).
+	// CMFA always loads "<profileDir>/config.yaml", so without this every profile
+	// shared the name "config" and switching profiles let the orphan-group cleanup
+	// wipe the other profile's learned weights. Pointing SetConfig at the profile
+	// directory itself makes the keyspace name the profile UUID. Nothing reads
+	// this path from the kernel on Android (we parse bytes ourselves).
+	C.SetConfig(path)
 
 	// like hub.Parse()
 	hub.ApplyConfig(cfg)
