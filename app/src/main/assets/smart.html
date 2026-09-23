@@ -143,6 +143,8 @@ const RANK_SHOW = 8;
 const LIVE_INTERVAL = 5000;
 let groups = [], current = null, syncing = false;
 let rankMaps = {};        // group -> 节点名:{Weight,Rank}(累计学习标签)
+let lastTestMap = {};     // 节点名 -> 最近一次测速时间
+let groupLastTest = null; // 当前分组最近测速时间
 let liveData = {};        // group -> {rows:[[node,agg]...], nodeCount, connCount, total}
 let lastConns = null;     // 原始连接缓存
 let fastBusy = false, lastFetchAt = 0;
@@ -151,6 +153,16 @@ const $ = id => document.getElementById(id);
 const esc = s => (s + "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const rankCN = s => RANK_CN[s] || (s || "");
 const rankCls = s => s === "MostUsed" ? "most" : (s === "OccasionalUsed" ? "occ" : "rare");
+
+function fmtAgo(ms) {
+  if (ms < 0 || isNaN(ms)) return "—";
+  const m = Math.floor(ms / 60000);
+  if (m < 1) return "刚刚";
+  if (m < 60) return m + " 分钟前";
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + " 小时 " + (m % 60) + " 分前";
+  return Math.floor(h / 24) + " 天前";
+}
 
 function fmtBytes(b) {
   if (!b || b <= 0) return "0B";
@@ -261,10 +273,12 @@ function renderLive() {
     live.innerHTML = '<div class="banner"><span class="spin"></span> 正在获取该分组实时数据…</div>';
     return;
   }
+  const testAgo = groupLastTest ? fmtAgo(Date.now() - groupLastTest) : "尚未测速";
   hero.innerHTML = '<div class="card"><div class="stat-row">'
     + '<div class="stat"><div class="n">' + d.map.size + '</div><div class="t">活跃节点</div></div>'
     + '<div class="stat"><div class="n">' + d.connCount + '</div><div class="t">全部连接</div></div>'
     + '<div class="stat"><div class="n">' + fmtBytes(d.total) + '</div><div class="t">组内累计流量</div></div>'
+    + '<div class="stat"><div class="n" style="font-size:13px;line-height:1.4">' + esc(testAgo) + '</div><div class="t">距上次测速</div></div>'
     + "</div></div>";
 
   if (!d.rows.length) {
@@ -273,8 +287,11 @@ function renderLive() {
   }
   const max = Math.max(1, d.rows[0][1].up + d.rows[0][1].down);
   const rk = rankMaps[current] || {};
+  const ago = groupLastTest ? fmtAgo(Date.now() - groupLastTest) : null;
   let s = '<div class="seclabel"><span class="l"><span class="live-dot"></span>实时调度</span>'
-    + '<span class="r">' + d.rows.length + ' 个节点在承载 · 5s 刷新</span></div><div class="card">';
+    + '<span class="r">'
+    + (ago ? "距上次测速 " + ago + " · " : "尚未测速 · ")
+    + d.rows.length + ' 个节点在承载</span></div><div class="card">';
   d.rows.forEach(([name, e], i) => {
     const t = e.up + e.down;
     const r = rk[name];
@@ -297,6 +314,27 @@ async function slowTick() {
     const rm = {};
     for (const it of ranked) rm[it.Name] = it;
     rankMaps[current] = rm;
+    const g = await jget("/group/" + encodeURIComponent(current));
+    const allNodes = g.all || [];
+    const upd = d.last_updated ? new Date(d.last_updated * 1000) : null;
+
+    // 距上次测速:各节点延迟历史里最新的一次时间戳
+    // (放在空排行早退之前,保证任何状态下都更新)
+    try {
+      const px = await jget("/proxies");
+      lastTestMap = {};
+      for (const name of allNodes) {
+        const item = px.proxies && px.proxies[name];
+        const h = item && item.history && item.history[item.history.length - 1];
+        if (h && h.time) {
+          const t = new Date(h.time).getTime();
+          if (!isNaN(t)) lastTestMap[name] = t;
+        }
+      }
+      const times = Object.values(lastTestMap);
+      groupLastTest = times.length ? Math.max(...times) : null;
+    } catch (e2) { groupLastTest = null; }
+
     if (!ranked.length) {
       rankEl.innerHTML = '<details class="ranking"><summary>累计权重排行(每 5 分钟统计)</summary><div class="rank-body">'
         + '<div class="banner" style="margin:0">'
@@ -304,9 +342,6 @@ async function slowTick() {
         + "<br>正常上网几分钟后,内核会自动为使用过的节点计分。</div></div></details>";
       return;
     }
-    const g = await jget("/group/" + encodeURIComponent(current));
-    const allNodes = g.all || [];
-    const upd = d.last_updated ? new Date(d.last_updated * 1000) : null;
     const top = ranked.slice(0, Math.min(3, ranked.length));
     const medals = ["🥇", "🥈", "🥉"];
     let body = '<div class="podium">' + top.map((it, i) => {
