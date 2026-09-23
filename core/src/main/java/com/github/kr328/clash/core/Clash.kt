@@ -128,6 +128,13 @@ object Clash {
     fun healthCheckAll() {
         Bridge.nativeHealthCheckAll()
     }
+    fun urlTestGroup(name: String): CompletableDeferred<Unit> {
+        val completable = CompletableDeferred<Unit>()
+
+        Bridge.nativeGroupURLTest(completable, name)
+
+        return completable
+    }
 
     fun patchSelector(selector: String, name: String): Boolean {
         return Bridge.nativePatchSelector(selector, name)

@@ -202,6 +202,18 @@ Java_com_github_kr328_clash_core_bridge_Bridge_nativeHealthCheckAll(JNIEnv *env,
     healthCheckAll();
 }
 
+JNIEXPORT void JNICALL
+Java_com_github_kr328_clash_core_bridge_Bridge_nativeGroupURLTest(JNIEnv *env, jobject thiz,
+                                                                  jobject completable,
+                                                                  jstring name) {
+    TRACE_METHOD();
+
+    jobject _completable = new_global(completable);
+    scoped_string _name = get_string(name);
+
+    groupURLTest(_completable, _name);
+}
+
 JNIEXPORT jboolean JNICALL
 Java_com_github_kr328_clash_core_bridge_Bridge_nativePatchSelector(JNIEnv *env, jobject thiz,
                                                                    jstring selector, jstring name) {
