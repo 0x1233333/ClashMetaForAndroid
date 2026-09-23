@@ -92,6 +92,10 @@ class ProfileWorker : BaseService() {
             ProfileReceiver.scheduleNext(this, imported)
         } catch (e: Exception) {
             failed(imported.uuid, imported.name, e.message ?: "Unknown")
+
+            // reschedule even after a failure: one broken attempt (e.g. network
+            // restricted in Doze) must not permanently kill the auto-update chain
+            ProfileReceiver.scheduleNext(this, imported)
         }
     }
 

@@ -79,6 +79,15 @@ func healthCheckAll() {
 	tunnel.HealthCheckAll()
 }
 
+//export groupURLTest
+func groupURLTest(completable unsafe.Pointer, name C.c_string) {
+	go func(name string) {
+		tunnel.URLTestGroup(name)
+
+		C.complete(completable, nil)
+	}(C.GoString(name))
+}
+
 //export patchSelector
 func patchSelector(selector, name C.c_string) C.int {
 	s := C.GoString(selector)

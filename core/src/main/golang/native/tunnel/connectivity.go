@@ -1,9 +1,12 @@
 package tunnel
 
 import (
+	"context"
 	"sync"
 
 	"github.com/metacubex/mihomo/adapter/outboundgroup"
+	"github.com/metacubex/mihomo/common/utils"
+	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/constant/provider"
 	"github.com/metacubex/mihomo/log"
 	"github.com/metacubex/mihomo/tunnel"
@@ -45,5 +48,34 @@ func HealthCheckAll() {
 		go func(group string) {
 			HealthCheck(group)
 		}(g)
+	}
+}
+
+// URLTestGroup runs a group-level URLTest, refreshing every member's
+// alive flag and delay history (unlike HealthCheck, which only covers
+// providers and is a no-op for groups with static proxies).
+func URLTestGroup(name string) {
+	p := tunnel.Proxies()[name]
+
+	if p == nil {
+		log.Warnln("Request url test for `%s`: not found", name)
+
+		return
+	}
+
+	g, ok := p.Adapter().(outboundgroup.ProxyGroup)
+	if !ok {
+		log.Warnln("Request url test for `%s`: invalid type %s", name, p.Type().String())
+
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), C.DefaultTCPTimeout*4)
+	defer cancel()
+
+	if _, err := g.URLTest(ctx, C.DefaultTestURL, utils.IntRanges[uint16]{}); err != nil {
+		log.Warnln("URL test group `%s`: %s", name, err.Error())
+	} else {
+		log.Infoln("URL test group `%s` finished", name)
 	}
 }

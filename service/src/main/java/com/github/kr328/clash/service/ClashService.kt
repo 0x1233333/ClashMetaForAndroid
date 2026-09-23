@@ -36,6 +36,8 @@ class ClashService : BaseService() {
         install(AppListCacheModule(self))
         install(TimeZoneModule(self))
         install(SuspendModule(self))
+        install(SmartHealthModule(self))
+        install(ProfileAutoUpdateModule(self))
 
         try {
             while (isActive) {
