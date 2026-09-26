@@ -61,14 +61,14 @@ func URLTestGroup(name string) error {
 	if p == nil {
 		log.Warnln("Request url test for `%s`: not found", name)
 
-		return
+		return nil
 	}
 
 	g, ok := p.Adapter().(outboundgroup.ProxyGroup)
 	if !ok {
 		log.Warnln("Request url test for `%s`: invalid type %s", name, p.Type().String())
 
-		return
+		return nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), C.DefaultTCPTimeout*4)
