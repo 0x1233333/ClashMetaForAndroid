@@ -91,13 +91,31 @@ class SmartHealthModule(
         runCatching {
             val body = httpGet("$CONTROLLER/group") ?: return@runCatching
             val proxies = JSONObject(body).optJSONArray("proxies") ?: return@runCatching
-            val smartNames = (0 until proxies.length())
+            // 成员数多的组先测(如"总的"组);成员已被覆盖的组跳过,避免同一节点被反复测速
+            val smartGroups = (0 until proxies.length())
                 .map { proxies.getJSONObject(it) }
                 .filter { it.optString("type").equals("Smart", ignoreCase = true) }
-                .map { it.optString("name") }
+                .map { it.optString("name") to it }
+            val smartNames = smartGroups.sortedByDescending { it.second.optJSONArray("all")?.length() ?: 0 }
+                .map { it.first }
 
+            val testedMembers = mutableSetOf<String>()
+            var skipped = 0
             var failures = 0
             for (name in smartNames) {
+                val members = smartGroups.firstOrNull { it.first == name }
+                    ?.second?.optJSONArray("all")
+                    ?.let { arr -> (0 until arr.length()).map { arr.optString(it) } }
+                    ?: emptyList()
+
+                if (members.isNotEmpty() && members.all { it in testedMembers }) {
+                    skipped++
+
+                    Log.d("SmartHealth: skip $name (members already tested)")
+
+                    continue
+                }
+
                 try {
                     Clash.urlTestGroup(name).await()
 
@@ -107,10 +125,13 @@ class SmartHealthModule(
 
                     Log.w("SmartHealth: urltest $name failed: ${e.message}")
                 }
+
+                testedMembers.addAll(members)
             }
 
             if (smartNames.isNotEmpty()) {
-                Log.i("SmartHealth: tested ${smartNames.size} smart group(s), failures=$failures")
+                Log.i("SmartHealth: tested ${smartNames.size - skipped} smart group(s) " +
+                      "($skipped covered by larger groups), failures=$failures")
 
                 if (failures == smartNames.size) {
                     failStreak++
