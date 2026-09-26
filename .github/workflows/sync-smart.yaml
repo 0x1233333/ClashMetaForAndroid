@@ -48,20 +48,28 @@ jobs:
             echo "merged=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Update smart kernel submodule to vernesong Alpha HEAD
+      - name: Kernel stays pinned (manual updates only)
         id: kernel
         run: |
-          cd core/src/foss/golang/clash
-          git fetch origin Alpha
-          NEW=$(git rev-parse origin/Alpha)
-          git checkout -q "$NEW"
-          echo "kernel=$NEW" >> "$GITHUB_OUTPUT"
-          cd -
-          git add core/src/foss/golang/clash
-          if git diff --cached --quiet; then
-            echo "kernel_changed=false" >> "$GITHUB_OUTPUT"
+          # vernesong Alpha 是开发分支,2026-09 曾出现跟进后 xhttp 断、gvisor 断流的问题。
+          # 内核更新改为手动:需要时把 core/src/foss/golang/clash 指到目标提交并提交,
+          # 或者 dispatch 本 workflow 时传入 update_kernel=true 才跟进 Alpha HEAD。
+          if [ "${{ inputs.update_kernel }}" = "true" ]; then
+            cd core/src/foss/golang/clash
+            git fetch origin Alpha
+            NEW=$(git rev-parse origin/Alpha)
+            git checkout -q "$NEW"
+            echo "kernel=$NEW" >> "$GITHUB_OUTPUT"
+            cd -
+            git add core/src/foss/golang/clash
+            if git diff --cached --quiet; then
+              echo "kernel_changed=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "kernel_changed=true" >> "$GITHUB_OUTPUT"
+            fi
           else
-            echo "kernel_changed=true" >> "$GITHUB_OUTPUT"
+            echo "kernel_changed=false" >> "$GITHUB_OUTPUT"
+            echo "kernel pinned, skipped"
           fi
 
       - name: Sync Go modules
