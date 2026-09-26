@@ -1,6 +1,8 @@
 package com.github.kr328.clash.service.clash.module
 
 import android.app.Service
+import android.os.PowerManager
+import androidx.core.content.getSystemService
 import com.github.kr328.clash.common.log.Log
 import com.github.kr328.clash.service.ProfileReceiver
 import com.github.kr328.clash.service.data.Imported
@@ -24,11 +26,16 @@ class ProfileAutoUpdateModule(service: Service) : Module<Unit>(service) {
         private val MIN_INTERVAL = TimeUnit.MINUTES.toMillis(15)
     }
 
+    private val power = service.getSystemService<PowerManager>()
+
     override suspend fun run() {
         delay(TimeUnit.MINUTES.toMillis(2))
 
         while (true) {
-            checkDueProfiles()
+            // 只在亮屏时检查:熄屏(Doze)下拉取订阅大概率失败且打扰设备
+            if (power?.isInteractive != false) {
+                checkDueProfiles()
+            }
 
             delay(CHECK_INTERVAL_MS)
         }

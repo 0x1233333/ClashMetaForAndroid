@@ -1,16 +1,19 @@
 package com.github.kr328.clash.service.clash.module
 
 import android.app.Service
+import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.os.PowerManager
 import androidx.core.content.getSystemService
 import com.github.kr328.clash.common.log.Log
 import com.github.kr328.clash.core.Clash
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
@@ -19,13 +22,13 @@ import java.net.URL
 import java.net.URLEncoder
 
 /**
- * Periodically runs a group-level URLTest on every smart group.
+ * Periodically runs a group-level URLTest on every smart group while the
+ * screen is on, so dead nodes are excluded from selection promptly.
  *
- * The smart kernel filters dead nodes by their alive flag, which is only
- * updated by delay tests. Without this module the flags go stale after a
- * network switch and traffic keeps going through invalid nodes until the
- * user runs a manual latency test. This module automates exactly that:
- * an immediate test on every network change plus a periodic fallback.
+ * Deliberately idles while the screen is off: in Doze the tests are
+ * unreliable (they would mark healthy nodes dead and trip the reload
+ * watchdog) and the radio cost is real. A check runs immediately when the
+ * screen turns on and after every network change.
  */
 class SmartHealthModule(
     service: Service,
@@ -34,13 +37,20 @@ class SmartHealthModule(
     companion object {
         private const val CONTROLLER = "http://127.0.0.1:9090"
         private const val INTERVAL_MS = 3 * 60 * 1000L
+        private const val SCREEN_OFF_INTERVAL_MS = 60_000L
         private const val INITIAL_DELAY_MS = 20_000L
         private const val TEST_TIMEOUT_MS = 5000
+        private const val RELOAD_MIN_GAP_MS = 30 * 60 * 1000L
+        private const val FAIL_STREAK_LIMIT = 3
     }
 
     private val connectivity = service.getSystemService<ConnectivityManager>()!!
+    private val power = service.getSystemService<PowerManager>()!!
     private val networkEvents = Channel<Unit>(Channel.UNLIMITED)
-    private var failStreak = 0
+    private val screenEvents = receiveBroadcast(false, Channel.CONFLATED) {
+        addAction(Intent.ACTION_SCREEN_ON)
+        addAction(Intent.ACTION_SCREEN_OFF)
+    }
 
     private val callback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
@@ -51,6 +61,9 @@ class SmartHealthModule(
             networkEvents.trySend(Unit)
         }
     }
+
+    @Volatile private var failStreak = 0
+    @Volatile private var lastReloadAt = 0L
 
     init {
         try {
@@ -71,12 +84,13 @@ class SmartHealthModule(
 
         try {
             while (true) {
-                checkSmartGroups()
-
-                // re-check on network change (alive flags go stale exactly then),
-                // otherwise at a fixed interval
-                withTimeoutOrNull(INTERVAL_MS) { networkEvents.receive() }
-                delay(2000) // let the new network settle before testing
+                if (power.isInteractive) {
+                    checkSmartGroups()
+                    waitEvents(INTERVAL_MS)
+                } else {
+                    // 熄屏:Doze 下测速结果不可靠且费电,只等亮屏/网络事件
+                    waitEvents(SCREEN_OFF_INTERVAL_MS)
+                }
             }
         } finally {
             try {
@@ -87,15 +101,28 @@ class SmartHealthModule(
         }
     }
 
+    private suspend fun waitEvents(timeoutMs: Long) {
+        withTimeoutOrNull(timeoutMs) {
+            select {
+                networkEvents.onReceive { }
+                screenEvents.onReceive { intent ->
+                    if (intent.action == Intent.ACTION_SCREEN_ON) {
+                        delay(3000) // 亮屏后等无线网络就绪再测
+                    }
+                }
+            }
+        }
+    }
+
     private suspend fun checkSmartGroups() = withContext(Dispatchers.IO) {
         runCatching {
             val body = httpGet("$CONTROLLER/group") ?: return@runCatching
             val proxies = JSONObject(body).optJSONArray("proxies") ?: return@runCatching
-            // 成员数多的组先测(如"总的"组);成员已被覆盖的组跳过,避免同一节点被反复测速
             val smartGroups = (0 until proxies.length())
                 .map { proxies.getJSONObject(it) }
                 .filter { it.optString("type").equals("Smart", ignoreCase = true) }
                 .map { it.optString("name") to it }
+            // 成员数多的组先测(如"总的"组);成员已被覆盖的组跳过,避免同一节点被反复测速
             val smartNames = smartGroups.sortedByDescending { it.second.optJSONArray("all")?.length() ?: 0 }
                 .map { it.first }
 
@@ -132,22 +159,24 @@ class SmartHealthModule(
             if (smartNames.isNotEmpty()) {
                 Log.i("SmartHealth: tested ${smartNames.size - skipped} smart group(s) " +
                       "($skipped covered by larger groups), failures=$failures")
+            }
 
-                if (failures == smartNames.size) {
-                    failStreak++
+            if (smartNames.isNotEmpty() && failures == smartNames.size) {
+                failStreak++
 
-                    Log.w("SmartHealth: all groups failed ($failStreak streak)")
-                } else {
+                Log.w("SmartHealth: all groups failed ($failStreak streak)")
+
+                if (failStreak >= FAIL_STREAK_LIMIT && power.isInteractive &&
+                    System.currentTimeMillis() - lastReloadAt >= RELOAD_MIN_GAP_MS) {
                     failStreak = 0
-                }
+                    lastReloadAt = System.currentTimeMillis()
 
-                if (failStreak >= 3) {
-                    Log.w("SmartHealth: total failure x$failStreak while testing through tunnel, requesting profile reload")
-
-                    failStreak = 0
+                    Log.w("SmartHealth: total failure x$FAIL_STREAK_LIMIT while screen on, requesting profile reload")
 
                     onRequestReload()
                 }
+            } else if (failures < smartNames.size) {
+                failStreak = 0
             }
         }.onFailure {
             Log.w("SmartHealth: check failed: ${it.message}")
@@ -164,5 +193,4 @@ class SmartHealthModule(
             conn.disconnect()
         }
     }
-
 }
