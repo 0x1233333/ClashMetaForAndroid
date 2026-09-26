@@ -54,7 +54,8 @@ func HealthCheckAll() {
 // URLTestGroup runs a group-level URLTest, refreshing every member's
 // alive flag and delay history (unlike HealthCheck, which only covers
 // providers and is a no-op for groups with static proxies).
-func URLTestGroup(name string) {
+// Returns an error when every member failed (e.g. all timeout).
+func URLTestGroup(name string) error {
 	p := tunnel.Proxies()[name]
 
 	if p == nil {
@@ -73,9 +74,14 @@ func URLTestGroup(name string) {
 	ctx, cancel := context.WithTimeout(context.Background(), C.DefaultTCPTimeout*4)
 	defer cancel()
 
-	if _, err := g.URLTest(ctx, C.DefaultTestURL, utils.IntRanges[uint16]{}); err != nil {
+	_, err := g.URLTest(ctx, C.DefaultTestURL, utils.IntRanges[uint16]{})
+	if err != nil {
 		log.Warnln("URL test group `%s`: %s", name, err.Error())
-	} else {
-		log.Infoln("URL test group `%s` finished", name)
+
+		return err
 	}
+
+	log.Infoln("URL test group `%s` finished", name)
+
+	return nil
 }

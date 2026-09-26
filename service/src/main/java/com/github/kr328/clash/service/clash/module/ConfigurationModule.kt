@@ -20,6 +20,11 @@ class ConfigurationModule(service: Service) : Module<ConfigurationModule.LoadExc
     private val store = ServiceStore(service)
     private val reload = Channel<Unit>(Channel.CONFLATED)
 
+    /** Request a hot reload of the active profile (used by watchdog modules). */
+    fun requestReload() {
+        reload.trySend(Unit)
+    }
+
     override suspend fun run() {
         val broadcasts = receiveBroadcast {
             addAction(Intents.ACTION_PROFILE_CHANGED)

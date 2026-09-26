@@ -82,9 +82,9 @@ func healthCheckAll() {
 //export groupURLTest
 func groupURLTest(completable unsafe.Pointer, name C.c_string) {
 	go func(name string) {
-		tunnel.URLTestGroup(name)
+		err := tunnel.URLTestGroup(name)
 
-		C.complete(completable, nil)
+		C.complete(completable, marshalString(err))
 	}(C.GoString(name))
 }
 

@@ -27,7 +27,10 @@ import java.net.URLEncoder
  * user runs a manual latency test. This module automates exactly that:
  * an immediate test on every network change plus a periodic fallback.
  */
-class SmartHealthModule(service: Service) : Module<Unit>(service) {
+class SmartHealthModule(
+    service: Service,
+    private val onRequestReload: suspend () -> Unit = {}
+) : Module<Unit>(service) {
     companion object {
         private const val CONTROLLER = "http://127.0.0.1:9090"
         private const val INTERVAL_MS = 3 * 60 * 1000L
@@ -37,6 +40,7 @@ class SmartHealthModule(service: Service) : Module<Unit>(service) {
 
     private val connectivity = service.getSystemService<ConnectivityManager>()!!
     private val networkEvents = Channel<Unit>(Channel.UNLIMITED)
+    private var failStreak = 0
 
     private val callback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
@@ -92,14 +96,37 @@ class SmartHealthModule(service: Service) : Module<Unit>(service) {
                 .filter { it.optString("type").equals("Smart", ignoreCase = true) }
                 .map { it.optString("name") }
 
+            var failures = 0
             for (name in smartNames) {
-                Clash.urlTestGroup(name)
+                try {
+                    Clash.urlTestGroup(name).await()
 
-                Log.d("SmartHealth: urltest dispatched $name")
+                    Log.d("SmartHealth: urltest $name ok")
+                } catch (e: Exception) {
+                    failures++
+
+                    Log.w("SmartHealth: urltest $name failed: ${e.message}")
+                }
             }
 
             if (smartNames.isNotEmpty()) {
-                Log.i("SmartHealth: tested ${smartNames.size} smart group(s)")
+                Log.i("SmartHealth: tested ${smartNames.size} smart group(s), failures=$failures")
+
+                if (failures == smartNames.size) {
+                    failStreak++
+
+                    Log.w("SmartHealth: all groups failed ($failStreak streak)")
+                } else {
+                    failStreak = 0
+                }
+
+                if (failStreak >= 3) {
+                    Log.w("SmartHealth: total failure x$failStreak while testing through tunnel, requesting profile reload")
+
+                    failStreak = 0
+
+                    onRequestReload()
+                }
             }
         }.onFailure {
             Log.w("SmartHealth: check failed: ${it.message}")
