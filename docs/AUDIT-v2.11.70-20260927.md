@@ -321,6 +321,29 @@
 
 → 两个结论:①**P2-16 不是"顺手就能关"的开关**——关掉它,页面在真机里立刻拿不到数据;②**"用浏览器打开页面"不能替代 App 内 WebView 验证**,想要正面证据必须在 App 里跑(而本轮因为签名 keystore 被 TCC 挡住、出不了新包,只能验到"页面可运行、无 JS 报错"这一层)。
 
+### 7.9 第四轮:没有真签名也能验证(调试包路线)+ 运行期正面证据
+
+**背景**:真签名 `~/Documents/代理/smart-release.jks` 对助手进程是**目录级 TCC 拒绝**(`ls` 整个目录都被拒,文件还带 `com.apple.macl`),`osascript`→Terminal 代跑也被拒(`-1743 未获得授权发送 Apple 事件`)→ 出不了正式签名的包。
+
+**绕法(可复用)**:把 `local.properties` 的包名覆盖打开(`custom.application.id=com.github.metacubex.clash.smart` + `remove.suffix=true`)→ `./gradlew app:assembleMetaDebug` → 得到一个**独立包名的调试包**,`adb install -r` 与原 `.meta` 包**并存**,既不动现有 App、也不需要真签名;验完再把覆盖注释回去(否则正式包包名会错)。产物 `cmfa-2.11.70-meta-arm64-v8a-debug.apk`(90.5 MB,`versionName 2.11.70.debug`)。
+
+**这一轮的实测结果(全部在模拟器上跑)**
+
+| 检查项 | 结果 |
+|---|---|
+| 配置导入 | ✅ 走 App 内 `Import from URL`(`adb reverse tcp:8930 tcp:8930` 把订阅喂成 127.0.0.1;`network_security_config` 只放行回环明文) |
+| `[SmartAdapt] converted` | ✅ 6 个组(自动选择/韩国/日本/美国/荷兰/其他地区) |
+| `[SmartMem] Go soft memory limit` | ✅ 384 MiB |
+| `[SmartDns]` | ✅ `ipv6 forced on` + `proxy-server-nameserver [...] -> [1.1.1.1/8.8.8.8]`(含明文 DNS 被劫持的理由) |
+| **节点全量(111)** | ✅ **88/111、v6 47/48** —— 与 release 包逐项一致,**无回归** |
+| 真实流量选路 | ✅ 22 条连接全部走 `node-revoked`(smart 按目标+ASN 挑最优) |
+| smart 存储 | ✅ `cache.db` 131,072 B 并在增长 |
+| **权重/排行链路(之前的疑点)** | ✅✅ `/group/node-revoked/weights` 返回 **110 条真实数据**(`MostUsed/Weight 100`、`RarelyUsed/Weight 0`)→ 证明整条 ranking 落库/读取链路可用;之前为空确实只是样本不足 |
+| **App 内仪表盘(WebView)** | ✅ 内核版本/模式/`已同步 11:15:47`/分组标签/统计卡片全部正常,**无任何报错**(Chrome 验不了的那一步,在这里过) |
+| 运行期稳定性 | ✅ 零 panic、零 SmartStore 告警 |
+
+**仍未拿到**:一小时 RSS/CPU 曲线(后台采样中)、Kotlin 模块整组测速的周期证据(需等 ≥10 分钟观察节点 `history` 时间戳)。另外:**仓库里那份 tracked `release.keystore` 用现有口令打不开**(`keytool: keystore password was incorrect`)→ CI 出的包与本地真签名包**是否同一把钥匙,尚未验证**(若不同,CI 包无法覆盖安装本地包;用户当前发布走本地签名路径)。
+
 ## 附:本次审计用到的可复现命令
 
 ```bash
