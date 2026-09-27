@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
 	"strings"
 
 	"github.com/metacubex/mihomo/component/profile/cachefile"
@@ -31,6 +32,15 @@ var smartModelBin []byte
 const smartAdaptEnabled = true
 
 var smartAdaptFrom = map[string]bool{"url-test": true, "fallback": true, "load-balance": true}
+
+// smartGroupHealthInterval 是转换后的 smart 组保留的 url-test 健康检查周期(秒)。
+//
+// 订阅里这类组通常写 interval: 300(5 分钟),内核就对整组每个节点做一遍
+// "DNS 解析 + TLS 握手 + HTTP 请求",**熄屏也照跑** —— 在移动网络上表现为
+// "用一段时间卡一下",而 App 侧的任何省电/门控都管不到它(那不是 App 发的)。
+// smart 组自身有 10~15 分钟的稳定性/失效检测,且节点真实失败会立刻进入存储统计,
+// 被选择器即时绕开,所以组级健康检查没必要每 5 分钟一次。
+const smartGroupHealthInterval = 600
 
 // Model.bin 的期望哈希(与 //go:embed 进来的是同一份文件;用来在装盘时自检)。
 const smartModelSHA256 = "23633022a815fb34e510befe1c176ba50af3ced48f08b172454f4cd6b8327788"
@@ -281,6 +291,25 @@ func patchSmartAdapt(cfg *config.RawConfig, _ string) error {
 		}
 
 		name, _ := g["name"].(string)
+
+		// 放宽组级健康检查周期(见 smartGroupHealthInterval 注释):
+		// 订阅里的 300 秒会让内核每 5 分钟整组测一遍,熄屏也照跑。
+		switch v := g["interval"].(type) {
+		case int:
+			if v < smartGroupHealthInterval {
+				g["interval"] = smartGroupHealthInterval
+			}
+		case float64:
+			if int(v) < smartGroupHealthInterval {
+				g["interval"] = smartGroupHealthInterval
+			}
+		case string:
+			// 有的订阅把 interval 写成字符串
+			if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n < smartGroupHealthInterval {
+				g["interval"] = smartGroupHealthInterval
+			}
+		}
+
 		converted = append(converted, fmt.Sprintf("%s(%s→smart)", name, t))
 	}
 
