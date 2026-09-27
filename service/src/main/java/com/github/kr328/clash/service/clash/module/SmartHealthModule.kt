@@ -44,7 +44,9 @@ class SmartHealthModule(
         private const val METERED_INTERVAL_MS = 30 * 60 * 1000L
         private const val SCREEN_OFF_INTERVAL_MS = 60_000L
         private const val INITIAL_DELAY_MS = 20_000L
-        private const val TEST_TIMEOUT_MS = 5000
+        // 整组测速实测 ≈5.0s(100+ 节点),原来的 5000ms 几乎每轮都必然"超时",
+        // 只会刷一条无意义的 Log.w;放宽到 30s 才真能兜住内核卡死的情况。
+        private const val TEST_TIMEOUT_MS = 30_000
         private const val RELOAD_MIN_GAP_MS = 30 * 60 * 1000L
         private const val FAIL_STREAK_LIMIT = 3
     }
@@ -155,6 +157,9 @@ class SmartHealthModule(
             val testedMembers = mutableSetOf<String>()
             var skipped = 0
             var failures = 0
+            // 只统计"真正发起过测速"的组:smartNames 里含有成员已被大组覆盖而跳过的组,
+            // 拿 failures 和 smartNames.size 比较永远不会相等(旧判定因此形同虚设)。
+            var attempted = 0
             for (name in smartNames) {
                 val members = smartGroups.firstOrNull { it.first == name }
                     ?.second?.optJSONArray("all")
@@ -168,6 +173,8 @@ class SmartHealthModule(
 
                     continue
                 }
+
+                attempted++
 
                 try {
                     // 必须带超时:urlTestGroup 是打给内核的异步调用,内核卡住时 await() 永不返回,
@@ -195,11 +202,11 @@ class SmartHealthModule(
             }
 
             if (smartNames.isNotEmpty()) {
-                Log.i("SmartHealth: tested ${smartNames.size - skipped} smart group(s) " +
+                Log.i("SmartHealth: tested $attempted smart group(s) " +
                       "($skipped covered by larger groups), failures=$failures")
             }
 
-            if (smartNames.isNotEmpty() && failures == smartNames.size) {
+            if (attempted > 0 && failures == attempted) {
                 failStreak++
 
                 Log.w("SmartHealth: all groups failed ($failStreak streak)")
@@ -213,7 +220,7 @@ class SmartHealthModule(
 
                     onRequestReload()
                 }
-            } else if (failures < smartNames.size) {
+            } else if (failures < attempted) {
                 failStreak = 0
             }
         }.onFailure {
