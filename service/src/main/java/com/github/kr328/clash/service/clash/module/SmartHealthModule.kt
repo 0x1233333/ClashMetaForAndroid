@@ -36,7 +36,12 @@ class SmartHealthModule(
 ) : Module<Unit>(service) {
     companion object {
         private const val CONTROLLER = "http://127.0.0.1:9090"
-        private const val INTERVAL_MS = 3 * 60 * 1000L
+
+        // 一轮会把整组节点(常见 100+)全部重测一次,这在移动网络上会短暂占满带宽,
+        // 用户感受就是"用着用着网络卡一下"。内核自己已有基于真实流量的异常检测
+        // (checkNodesStable/checkBlockedNodes,5~10 分钟一轮)兜底,所以这里不必 3 分钟一次。
+        private const val INTERVAL_MS = 10 * 60 * 1000L
+        private const val METERED_INTERVAL_MS = 30 * 60 * 1000L
         private const val SCREEN_OFF_INTERVAL_MS = 60_000L
         private const val INITIAL_DELAY_MS = 20_000L
         private const val TEST_TIMEOUT_MS = 5000
@@ -86,7 +91,7 @@ class SmartHealthModule(
             while (true) {
                 if (power.isInteractive) {
                     checkSmartGroups()
-                    waitEvents(INTERVAL_MS)
+                    waitEvents(currentIntervalMs())
                 } else {
                     // 熄屏:Doze 下测速结果不可靠且费电,只等亮屏/网络事件
                     waitEvents(SCREEN_OFF_INTERVAL_MS)
@@ -98,6 +103,27 @@ class SmartHealthModule(
             } catch (e: Exception) {
                 Log.w("SmartHealth: unregister failed", e)
             }
+        }
+    }
+
+    /**
+     * 计费网络(移动数据)上把整组测速间隔拉长,避免周期性占满带宽;
+     * Wi-Fi/以太网保持较短间隔。读取失败时退化为较长间隔(保守)。
+     */
+    private fun currentIntervalMs(): Long {
+        return try {
+            val network = connectivity.activeNetwork ?: return METERED_INTERVAL_MS
+            val capabilities = connectivity.getNetworkCapabilities(network)
+                ?: return METERED_INTERVAL_MS
+
+            if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED))
+                INTERVAL_MS
+            else
+                METERED_INTERVAL_MS
+        } catch (e: Exception) {
+            Log.w("SmartHealth: read network capability failed", e)
+
+            METERED_INTERVAL_MS
         }
     }
 

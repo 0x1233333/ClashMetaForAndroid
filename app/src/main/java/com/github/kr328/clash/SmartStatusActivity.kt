@@ -47,4 +47,22 @@ class SmartStatusActivity : Activity() {
         webView.destroy()
         super.onDestroy()
     }
+
+    override fun onResume() {
+        super.onResume()
+
+        // 页面在前台时才让 WebView 跑 JS 定时器
+        webView.onResume()
+        webView.resumeTimers()
+    }
+
+    override fun onPause() {
+        // 这个页面每 5 秒拉 /connections、每 15 秒拉 /proxies(110 个节点含历史的完整 JSON)
+        // 并向内核要一次 /group(约 90 KB)。以前切到后台没有 onPause 处理,setInterval
+        // 会一直跑下去:内核不停做 JSON 序列化、WebView 不停解析,白耗 CPU/电量。
+        webView.onPause()
+        webView.pauseTimers()
+
+        super.onPause()
+    }
 }
