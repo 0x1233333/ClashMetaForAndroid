@@ -61,8 +61,7 @@ jobs:
           echo key.alias="$SIGNING_KEY_ALIAS" >> signing.properties
           echo key.password="$SIGNING_KEY_PASSWORD" >> signing.properties
             
-          echo "cat signing.properties"
-          cat signing.properties
+          echo "signing.properties written: $(wc -l < signing.properties) lines (values redacted)"
 
       - name: Pre-release Build
         if: success()
