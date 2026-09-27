@@ -148,6 +148,15 @@ let groupLastTest = null; // 当前分组最近测速时间
 let liveData = {};        // group -> {rows:[[node,agg]...], nodeCount, connCount, total}
 let lastConns = null;     // 原始连接缓存
 let fastBusy = false, lastFetchAt = 0;
+let pageHidden = document.hidden;
+let lastTestFetchAt = 0;   // /proxies(全量节点含历史)最多每分钟拉一次
+
+// 页面不可见时所有定时器空转返回;回到前台立即补一次刷新。
+// (Activity 侧也调了 webView.pauseTimers(),这里是第二道保险)
+document.addEventListener("visibilitychange", () => {
+  pageHidden = document.hidden;
+  if (!pageHidden) tick();
+});
 
 const $ = id => document.getElementById(id);
 const esc = s => (s + "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -180,6 +189,7 @@ async function jget(p) {
 function banner(html) { $("content").innerHTML = '<div class="banner">' + html + "</div>"; }
 
 async function loadMeta() {
+  if (pageHidden) return;          // 后台不轮询
   try {
     const v = await jget("/version");
     const mode = await jget("/configs").then(c => c.mode).catch(() => "?");
@@ -244,6 +254,7 @@ function aggregateAll(conns) {
 }
 
 async function fastTick() {
+  if (pageHidden) return;          // 后台不轮询
   if (fastBusy) return;
   const now = Date.now();
   if (now - lastFetchAt < 1200) { renderLive(); return; }
@@ -306,6 +317,7 @@ function renderLive() {
 }
 
 async function slowTick() {
+  if (pageHidden) return;          // 后台不轮询
   try {
     const rankEl = $("rank");
     if (!rankEl || !current) return;
@@ -319,21 +331,24 @@ async function slowTick() {
     const upd = d.last_updated ? new Date(d.last_updated * 1000) : null;
 
     // 距上次测速:各节点延迟历史里最新的一次时间戳
-    // (放在空排行早退之前,保证任何状态下都更新)
-    try {
-      const px = await jget("/proxies");
-      lastTestMap = {};
-      for (const name of allNodes) {
-        const item = px.proxies && px.proxies[name];
-        const h = item && item.history && item.history[item.history.length - 1];
-        if (h && h.time) {
-          const t = new Date(h.time).getTime();
-          if (!isNaN(t)) lastTestMap[name] = t;
+    // (放在空排行早退之前,保证任何状态下都更新;/proxies 是全量节点 JSON,节流到 60 秒一次)
+    if (Date.now() - lastTestFetchAt > 60000) {
+      lastTestFetchAt = Date.now();
+      try {
+        const px = await jget("/proxies");
+        lastTestMap = {};
+        for (const name of allNodes) {
+          const item = px.proxies && px.proxies[name];
+          const h = item && item.history && item.history[item.history.length - 1];
+          if (h && h.time) {
+            const t = new Date(h.time).getTime();
+            if (!isNaN(t)) lastTestMap[name] = t;
+          }
         }
-      }
-      const times = Object.values(lastTestMap);
-      groupLastTest = times.length ? Math.max(...times) : null;
-    } catch (e2) { groupLastTest = null; }
+        const times = Object.values(lastTestMap);
+        groupLastTest = times.length ? Math.max(...times) : null;
+      } catch (e2) { groupLastTest = null; }
+    }
 
     if (!ranked.length) {
       rankEl.innerHTML = '<details class="ranking"><summary>累计权重排行(每 5 分钟统计)</summary><div class="rank-body">'
