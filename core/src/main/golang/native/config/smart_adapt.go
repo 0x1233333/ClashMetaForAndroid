@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 
 	"github.com/metacubex/mihomo/component/profile/cachefile"
@@ -286,6 +287,11 @@ func patchSmartAdapt(cfg *config.RawConfig, _ string) error {
 	if len(converted) > 0 {
 		log.Infoln("[SmartAdapt] converted %d group(s): %s", len(converted), strings.Join(converted, ", "))
 	}
+
+	// 回读 Go 运行时的软内存上限。放在这里而不是 Init():Init() 执行时日志管道还没接到
+	// logcat,那一刻写什么都不出声(实测 Info/Warn 都被吞)。
+	// SetMemoryLimit(-1) 只返回当前值,不修改。
+	log.Infoln("[SmartMem] Go soft memory limit: %d MiB", debug.SetMemoryLimit(-1)>>20)
 
 	return nil
 }
