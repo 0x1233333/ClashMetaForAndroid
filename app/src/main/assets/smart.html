@@ -181,10 +181,15 @@ function fmtBytes(b) {
   return (i === 0 ? v : v.toFixed(1)) + u[i];
 }
 
-async function jget(p) {
-  const r = await fetch(BASE + p, { cache: "no-store" });
-  if (!r.ok) throw new Error("HTTP " + r.status);
-  return r.json();
+async function jget(p, timeout = 8000) {
+  // 带超时:内核卡住/接口挂起时不会让"刷新"永远转圈
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeout);
+  try {
+    const r = await fetch(BASE + p, { cache: "no-store", signal: ctl.signal });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
+  } finally { clearTimeout(timer); }
 }
 function banner(html) { $("content").innerHTML = '<div class="banner">' + html + "</div>"; }
 
@@ -415,6 +420,15 @@ tick();
 setInterval(fastTick, LIVE_INTERVAL);
 setInterval(slowTick, 15000);
 setInterval(loadMeta, 30000);
+/* 每 5 分钟重读分组列表:内核重启/换配置后标签自动跟上,不再卡在已失效的分组上 */
+setInterval(async () => {
+  if (pageHidden) return;
+  try {
+    await loadGroups();
+    renderTabs();
+    await slowTick();
+  } catch (e) { /* 静默:下一轮再试 */ }
+}, 300000);
 </script>
 </body>
 </html>
