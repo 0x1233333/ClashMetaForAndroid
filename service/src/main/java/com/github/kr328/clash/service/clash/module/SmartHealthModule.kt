@@ -144,9 +144,21 @@ class SmartHealthModule(
                 }
 
                 try {
-                    Clash.urlTestGroup(name).await()
+                    // 必须带超时:urlTestGroup 是打给内核的异步调用,内核卡住时 await() 永不返回,
+                    // 这个守护协程就此挂死(旧代码声明了 TEST_TIMEOUT_MS 却从未使用)。
+                    val finished = withTimeoutOrNull(TEST_TIMEOUT_MS.toLong()) {
+                        Clash.urlTestGroup(name).await()
 
-                    Log.d("SmartHealth: urltest $name ok")
+                        true
+                    }
+
+                    if (finished == null) {
+                        failures++
+
+                        Log.w("SmartHealth: urltest $name timed out (${TEST_TIMEOUT_MS}ms)")
+                    } else {
+                        Log.d("SmartHealth: urltest $name ok")
+                    }
                 } catch (e: Exception) {
                     failures++
 

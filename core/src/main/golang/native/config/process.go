@@ -19,6 +19,7 @@ import (
 var processors = []processor{
 	patchExternalController, // must before patchOverride, so we only apply ExternalController in Override settings
 	patchSmartAdapt,         // convert url-test/fallback/load-balance to smart before user overrides, so override still wins
+	patchSmartDns,           // force ipv6 + TLS DoH for node hostnames (IPv6-only servers), before user overrides
 	patchSmartController,    // expose loopback controller for the bundled Smart status dashboard
 	patchOverride,
 	patchGeneral,
