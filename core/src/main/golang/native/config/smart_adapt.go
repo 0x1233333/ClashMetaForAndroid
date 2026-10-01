@@ -86,12 +86,6 @@ var (
 		"https://120.53.53.53/dns-query",
 		"https://1.12.12.12/dns-query",
 	}
-
-	// smartFallbackResolvers 只用于"main 返回黑洞地址时"的兜底重查:
-	// 国内解析器对部分域名会给出 0.0.0.0/127.0.0.1(投毒/封禁响应),这时改问境外。
-	smartFallbackResolvers = []string{
-		"https://1.1.1.1/dns-query",
-	}
 )
 
 // isHijackablePlaintext 判断一条 nameserver 是否是明文形式(裸 IP / tcp:// / udp://)。
@@ -188,19 +182,11 @@ func patchSmartDns(cfg *config.RawConfig, _ string) error {
 			oldDN, cfg.DNS.DirectNameServer)
 	}
 
-	// 用户流量的 fallback:只有当 main 给出"黑洞地址"(0.0.0.0/127.0.0.1 这类典型投毒响应)
-	// 时才改问 1.1.1.1。**故意不打开 geoip: true** —— mihomo 的 fallback-filter 对"非 CN"
-	// 一律判为需要换源(rules/common/geoip.go),1.1.1.1 被墙时会把国内 DoH 已经拿到的
-	// 正确海外 IP 整段丢掉,断流立刻回来(Grok 2026-10-01 复核明确警告)。
-	cfg.DNS.Fallback = mergeResolvers(smartFallbackResolvers, filterUnhijackable(cfg.DNS.Fallback))
-	cfg.DNS.FallbackFilter.GeoIP = false
-	cfg.DNS.FallbackFilter.GeoIPCode = ""
-	cfg.DNS.FallbackFilter.IPCIDR = mergeResolvers(
-		[]string{"0.0.0.0/32", "127.0.0.1/32", "240.0.0.0/4"},
-		cfg.DNS.FallbackFilter.IPCIDR,
-	)
-	log.Infoln("[SmartDns] fallback %v + fallback-filter.ipcidr %v (geoip off: only blackhole answers are re-queried)",
-		cfg.DNS.Fallback, cfg.DNS.FallbackFilter.IPCIDR)
+	// 说明:这里**不再**注入 dns.fallback。曾试过"仅对黑洞地址改问 1.1.1.1"的写法,但
+	// mihomo 对"没有 A/AAAA 的成功应答"(NODATA / NXDOMAIN / CNAME)也会整段改用 fallback
+	// (resolver.go),而 1.1.1.1 在部分网络不可达 —— 浏览时的广告/追踪域名(大量 NXDOMAIN)
+	// 每次都要白等一个 5 秒超时,本身就会被感知成"卡/断流"。收益(只有 main 返回黑洞地址时
+	// 才补救)远小于这个副作用,故放弃(Grok 2026-10-01 复核的第 2 轮分析揭示了该副作用)。
 
 	log.Infoln("[SmartDns] proxy-server-nameserver [%s] -> %v (dropped %d plaintext/hijackable entry/entries; mihomo races resolvers in parallel, a hijacked answer would win)",
 		oldProxyNS, cfg.DNS.ProxyServerNameserver, oldProxyNSLen-len(keptProxyNS))
