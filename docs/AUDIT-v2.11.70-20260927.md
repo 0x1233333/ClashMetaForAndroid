@@ -445,6 +445,21 @@ Grok 复核我的"剔除明文"实现后指出三处必须改:
 - `nameserver-policy` / `proxy-server-nameserver-policy` 里的条目**未被过滤**(我的改动只作用于三个列表)。本订阅 policy 的 10 条值全是 https,无明文,故当前无风险;若将来订阅在 policy 里写明文,需另做处理(有序 map 类型,改动面更大)。
 - `ts://` / `et://` 这类少见 scheme 会被我的白名单**误删**(Grok 指出)。取舍:宁可删掉少见 scheme,也不放明文进来。
 
+### 7.14 第八轮:回退 `dns.fallback`(Grok 第 4/5 轮揭示的副作用)
+
+第 7.13 轮按 Grok 建议加了 `dns.fallback`(只对黑洞地址改问 1.1.1.1),但 Grok 在**下一轮**深挖源码时指出:
+> 没有 A/AAAA 的成功应答(**NODATA / NXDOMAIN / CNAME**)会**整段改用 fallback**(`resolver.go:325-341`)。
+
+后果:`1.1.1.1` 在部分网络不可达 —— 而**浏览时广告/追踪/打错的域名会产生大量 NXDOMAIN**,每次都要白等一个 DNS 超时,
+这种"卡一下"本身就是用户抱怨的那种体验。**收益(仅 main 返回黑洞地址时补救)远小于副作用 → 整体回退** fallback 与 fallback-filter 的注入,
+DNS 解析器加固(剔除明文、国内字面量 DoH、白名单收紧)全部保留。
+
+实测(模拟器,调试包):`[SmartDns]` 日志只剩 3 条(无 fallback 行);端到端 google 204;
+NXDOMAIN 域名(不存在域名 / `ads.doubleclick.net`)响应 ~2.2s,不再叠加额外的 1.1.1.1 超时。
+
+**教训(已记入 skill)**:给 DNS 列表"加兜底"之前,必须先查清 mihomo **在什么情况下会切到 fallback** ——
+不是只有"地址看起来像投毒"才切,NODATA/NXDOMAIN/CNAME 同样会切。
+
 ## 附:本次审计用到的可复现命令
 
 ```bash
