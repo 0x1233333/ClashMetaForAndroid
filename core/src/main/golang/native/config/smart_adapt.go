@@ -65,9 +65,76 @@ const (
 	smartIPv6TimeoutMS = 2000
 )
 
-var smartNodeResolvers = []string{
-	"https://1.1.1.1/dns-query",
-	"https://8.8.8.8/dns-query",
+var (
+	// smartNodeResolvers 解析 **代理服务器域名**。全部是 IP 字面量 + TLS:
+	// 不能被本地网关劫持,也不需要先解析自己的域名(不依赖明文 bootstrap)。
+	// 2026-09-28 本机实测(同一域名):
+	//   120.53.53.53 0.21s OK / 1.12.12.12 0.21s OK / 1.1.1.1 0.41s OK
+	//   8.8.8.8 本网络不可达(1.18s 无响应)/ 223.5.5.5 证书校验失败(故不用)
+	// ⚠️ 旧实现只留 1.1.1.1 + 8.8.8.8 两条境外 DoH:国内网络下被阻断就彻底没有
+	//    解析能力 → 节点域名解析失败 → 断流(用户 2026-09-28 反馈:关开代理才恢复)。
+	smartNodeResolvers = []string{
+		"https://120.53.53.53/dns-query", // DNSPod(国内)
+		"https://1.12.12.12/dns-query",   // DNSPod(国内)
+		"https://1.1.1.1/dns-query",      // Cloudflare(境外,对抗域名级污染)
+		"https://8.8.8.8/dns-query",      // Google(本网络不可达,换网络时可用)
+	}
+
+	// smartDirectResolvers 解析 **直连域名**:只用国内字面量 DoH。
+	// 不掺境外 —— 直连要的是本地答案,境外解析器可能返回海外 CDN 地址。
+	smartDirectResolvers = []string{
+		"https://120.53.53.53/dns-query",
+		"https://1.12.12.12/dns-query",
+	}
+)
+
+// isHijackablePlaintext 判断一条 nameserver 是否是明文形式(裸 IP / tcp:// / udp://)。
+//
+// ⚠️ 关键: mihomo 解析域名不是"按列表顺序回退",而是 batchExchange **并发竞速** ——
+// 第一个 err == nil 的回答获胜并 cancel 其余;且只有 SERVFAIL/REFUSED 算失败,
+// **被本地网关劫持后返回的 NOERROR 算成功**。明文应答是毫秒级,必然抢赢 DoH(约 0.2s),
+// 坏答案随后进缓存。这正是"服务还在 Running、但流量断掉,关开代理(ClearCache)才恢复"的成因。
+// 所以明文条目必须从列表里**剔除**,不能指望"放在后面当后备"。
+func isHijackablePlaintext(ns string) bool {
+	s := strings.ToLower(strings.TrimSpace(ns))
+	if s == "" {
+		return true
+	}
+	for _, p := range []string{"https://", "tls://", "quic://", "h3://", "system://", "dhcp://"} {
+		if strings.HasPrefix(s, p) {
+			return false
+		}
+	}
+	return true
+}
+
+// filterUnhijackable 丢弃明文解析器,只保留 TLS / 系统形式。
+func filterUnhijackable(list []string) []string {
+	out := make([]string, 0, len(list))
+	for _, ns := range list {
+		if !isHijackablePlaintext(ns) {
+			out = append(out, strings.TrimSpace(ns))
+		}
+	}
+	return out
+}
+
+// mergeResolvers 合并两组解析器(去重、丢弃空项)。
+// 注意:顺序**不代表优先级** —— 见 isHijackablePlaintext 的注释(并发竞速语义)。
+func mergeResolvers(priority, existing []string) []string {
+	merged := make([]string, 0, len(priority)+len(existing))
+	seen := make(map[string]bool, len(priority)+len(existing))
+	for _, list := range [][]string{priority, existing} {
+		for _, ns := range list {
+			key := strings.TrimSpace(ns)
+			if key == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			merged = append(merged, key)
+		}
+	}
+	return merged
 }
 
 // patchSmartDns 让"代理服务器域名"的解析不依赖明文 DNS(会被本地网关劫持)。
@@ -87,18 +154,32 @@ func patchSmartDns(cfg *config.RawConfig, _ string) error {
 		cfg.DNS.IPv6Timeout = smartIPv6TimeoutMS
 	}
 
-	for _, ns := range cfg.DNS.ProxyServerNameserver {
-		if isDoHWithLiteralIP(ns) {
-			// 订阅自己已经给了 TLS/IP 字面量解析器,尊重它
-			return nil
-		}
+	// 旧实现是"整体替换成 1.1.1.1 + 8.8.8.8 两条境外 DoH":境外 DoH 在国内被阻断时
+	// 就完全失去解析能力 → 节点域名解析失败 → 断流。
+	// 现在:IP 字面量 DoH + 订阅里**不可劫持**的条目一起参与竞速(竞速语义见
+	// isHijackablePlaintext 注释 —— 顺序无意义,但明文项必须剔除)。
+	oldProxyNS := strings.Join(cfg.DNS.ProxyServerNameserver, ", ")
+	oldProxyNSLen := len(cfg.DNS.ProxyServerNameserver)
+	keptProxyNS := filterUnhijackable(cfg.DNS.ProxyServerNameserver)
+	cfg.DNS.ProxyServerNameserver = mergeResolvers(smartNodeResolvers, keptProxyNS)
+
+	// 用户流量的解析(nameserver)同一套问题:订阅用"域名式 DoH",它自己的域名还要靠
+	// 明文 default-nameserver 引导 —— 明文被劫持时它连不上;而列表里若留着明文解析器,
+	// 竞速下劫持应答又必然抢赢。所以同样是"字面量 DoH + 不可劫持的订阅条目"。
+	if len(cfg.DNS.NameServer) > 0 {
+		oldNS := strings.Join(cfg.DNS.NameServer, ", ")
+		cfg.DNS.NameServer = mergeResolvers(smartNodeResolvers, filterUnhijackable(cfg.DNS.NameServer))
+		log.Infoln("[SmartDns] nameserver [%s] -> %v", oldNS, cfg.DNS.NameServer)
+	}
+	if len(cfg.DNS.DirectNameServer) > 0 {
+		oldDN := strings.Join(cfg.DNS.DirectNameServer, ", ")
+		cfg.DNS.DirectNameServer = mergeResolvers(smartDirectResolvers, filterUnhijackable(cfg.DNS.DirectNameServer))
+		log.Infoln("[SmartDns] direct-nameserver [%s] -> %v (domestic literals only: direct lookups want local answers)",
+			oldDN, cfg.DNS.DirectNameServer)
 	}
 
-	old := strings.Join(cfg.DNS.ProxyServerNameserver, ", ")
-	cfg.DNS.ProxyServerNameserver = append([]string(nil), smartNodeResolvers...)
-
-	log.Infoln("[SmartDns] proxy-server-nameserver [%s] -> %v (plaintext DNS is hijackable; node hostnames need AAAA)",
-		old, cfg.DNS.ProxyServerNameserver)
+	log.Infoln("[SmartDns] proxy-server-nameserver [%s] -> %v (dropped %d plaintext/hijackable entry/entries; mihomo races resolvers in parallel, a hijacked answer would win)",
+		oldProxyNS, cfg.DNS.ProxyServerNameserver, oldProxyNSLen-len(keptProxyNS))
 
 	return nil
 }
