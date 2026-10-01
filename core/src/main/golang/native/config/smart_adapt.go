@@ -86,6 +86,12 @@ var (
 		"https://120.53.53.53/dns-query",
 		"https://1.12.12.12/dns-query",
 	}
+
+	// smartFallbackResolvers 只用于"main 返回黑洞地址时"的兜底重查:
+	// 国内解析器对部分域名会给出 0.0.0.0/127.0.0.1(投毒/封禁响应),这时改问境外。
+	smartFallbackResolvers = []string{
+		"https://1.1.1.1/dns-query",
+	}
 )
 
 // isHijackablePlaintext 判断一条 nameserver 是否是明文形式(裸 IP / tcp:// / udp://)。
@@ -100,7 +106,11 @@ func isHijackablePlaintext(ns string) bool {
 	if s == "" {
 		return true
 	}
-	for _, p := range []string{"https://", "tls://", "quic://", "h3://", "system://", "dhcp://"} {
+	// 只认真正走 TLS 的三种 scheme。刻意**不**放行这三种(2026-10-01 Grok 复核指出):
+	//   h3://     —— mihomo 没有这个 scheme,留着会让整份 DNS 配置加载失败
+	//   system:// —— Android 上就是 UpdateSystemDNS 的明文 UDP(dns/patch_android.go)
+	//   dhcp://   —— DHCP 拿到的 DNS 同样是明文 UDP(dns/dhcp.go),照样会抢赢
+	for _, p := range []string{"https://", "tls://", "quic://"} {
 		if strings.HasPrefix(s, p) {
 			return false
 		}
@@ -177,6 +187,20 @@ func patchSmartDns(cfg *config.RawConfig, _ string) error {
 		log.Infoln("[SmartDns] direct-nameserver [%s] -> %v (domestic literals only: direct lookups want local answers)",
 			oldDN, cfg.DNS.DirectNameServer)
 	}
+
+	// 用户流量的 fallback:只有当 main 给出"黑洞地址"(0.0.0.0/127.0.0.1 这类典型投毒响应)
+	// 时才改问 1.1.1.1。**故意不打开 geoip: true** —— mihomo 的 fallback-filter 对"非 CN"
+	// 一律判为需要换源(rules/common/geoip.go),1.1.1.1 被墙时会把国内 DoH 已经拿到的
+	// 正确海外 IP 整段丢掉,断流立刻回来(Grok 2026-10-01 复核明确警告)。
+	cfg.DNS.Fallback = mergeResolvers(smartFallbackResolvers, filterUnhijackable(cfg.DNS.Fallback))
+	cfg.DNS.FallbackFilter.GeoIP = false
+	cfg.DNS.FallbackFilter.GeoIPCode = ""
+	cfg.DNS.FallbackFilter.IPCIDR = mergeResolvers(
+		[]string{"0.0.0.0/32", "127.0.0.1/32", "240.0.0.0/4"},
+		cfg.DNS.FallbackFilter.IPCIDR,
+	)
+	log.Infoln("[SmartDns] fallback %v + fallback-filter.ipcidr %v (geoip off: only blackhole answers are re-queried)",
+		cfg.DNS.Fallback, cfg.DNS.FallbackFilter.IPCIDR)
 
 	log.Infoln("[SmartDns] proxy-server-nameserver [%s] -> %v (dropped %d plaintext/hijackable entry/entries; mihomo races resolvers in parallel, a hijacked answer would win)",
 		oldProxyNS, cfg.DNS.ProxyServerNameserver, oldProxyNSLen-len(keptProxyNS))

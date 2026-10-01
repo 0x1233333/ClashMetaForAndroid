@@ -427,6 +427,24 @@
 1. smart 组把"握手成功但不通数据"的节点钉在目标上(`groupDialFailed` 只处理**拨号**错误)→ 在途连接黑洞,进程仍 Running。
 2. 网络切换/NAT 超时后已建立连接不重建(`ResetConnection` 只在解析器重载=关开时走)→ 与"两种网络都遇到"相符。
 
+### 7.13 第七轮:Grok 复核(第 4 轮)后的三处收敛
+
+Grok 复核我的"剔除明文"实现后指出三处必须改:
+
+| # | 问题 | 修法 |
+|---|---|---|
+| 1 | 白名单**误放行** `system://` / `dhcp://` —— Android 的 system 就是 `UpdateSystemDNS` 的**明文 UDP**(`dns/patch_android.go`),dhcp 拿到的同样是明文 UDP(`dns/dhcp.go`);它们照样以劫持 NOERROR 抢赢 | 白名单收紧为只剩 `https://` / `tls://` / `quic://` |
+| 2 | `h3://` mihomo 没有这个 scheme,留着会让**整份 DNS 配置加载失败** | 同上(不再放行) |
+| 3 | `fallback` 里若有明文,同样能抢赢;但**绝不能**开 `fallback-filter.geoip: true` —— mihomo 对"非 CN"一律判为换源(`rules/common/geoip.go`),`1.1.1.1` 被墙时会把国内 DoH 已拿到的**正确海外 IP 整段丢掉**,断流立刻回来 | `Fallback = [https://1.1.1.1/dns-query] + filterUnhijackable(原 fallback)`;`geoip=false`;`ipcidr` 仅 `0.0.0.0/32`、`127.0.0.1/32`、`240.0.0.0/4` |
+
+**实测(模拟器,调试包)**:四条 `[SmartDns]` 日志全部按预期出现 ——
+`nameserver` / `direct-nameserver` / `proxy-server-nameserver`(dropped 2)/
+`fallback [https://1.1.1.1/dns-query] + fallback-filter.ipcidr [0.0.0.0/32 127.0.0.1/32 240.0.0.0/4] (geoip off: only blackhole answers are re-queried)`;端到端 google 204 / youtube 200 / baidu 200 / github 200;节点抽样 v4 7/10(失败仍是一贯失败的 UDP443 类);**再次封死 1.1.1.1+8.8.8.8 后仍 google 204 / baidu 200**(测完 iptables 规则已清零)。
+
+**仍知未改(记录在案,不影响本次结论)**
+- `nameserver-policy` / `proxy-server-nameserver-policy` 里的条目**未被过滤**(我的改动只作用于三个列表)。本订阅 policy 的 10 条值全是 https,无明文,故当前无风险;若将来订阅在 policy 里写明文,需另做处理(有序 map 类型,改动面更大)。
+- `ts://` / `et://` 这类少见 scheme 会被我的白名单**误删**(Grok 指出)。取舍:宁可删掉少见 scheme,也不放明文进来。
+
 ## 附:本次审计用到的可复现命令
 
 ```bash
