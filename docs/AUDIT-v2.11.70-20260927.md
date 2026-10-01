@@ -460,6 +460,34 @@ NXDOMAIN 域名(不存在域名 / `ads.doubleclick.net`)响应 ~2.2s,不再叠�
 **教训(已记入 skill)**:给 DNS 列表"加兜底"之前,必须先查清 mihomo **在什么情况下会切到 fallback** ——
 不是只有"地址看起来像投毒"才切,NODATA/NXDOMAIN/CNAME 同样会切。
 
+### 7.15 第九轮:发布 v2.11.71-beta + 完整验收与两处工具坑
+
+**发布方式(用户 2026-10-01 明确的规则)**:本地多轮测试通过后才动仓库;发布直接由仓库 CI 出;**未在真机长时间验证的一律标 pre-release(测试版)**。
+
+| 项 | 内容 |
+|---|---|
+| 触发 | `POST /repos/0x1233333/ClashMetaForAndroid/actions/workflows/build-release.yaml/dispatches` (ref=smart, inputs.release-tag=v2.11.71) |
+| CI 自动完成 | 算 versionCode/Name(211071)→ 改 `build.gradle.kts` → commit + tag → 从 secret `SMART_KEYSTORE_BASE64` 还原**真签名** → `assembleMetaRelease` → 校验签名与版本号 → 上传 5 个 APK + `sha256sums.txt` |
+| CI 自推提交 | `9ba73ed8 Bump version to 2.11.71 (211071)` |
+| Release | `Clash Smart v2.11.71-beta(测试版:修断流/DNS 抗阻断)`,`prerelease = true` |
+| 发布后独立校验 | 下载 arm64 包复算 sha256 = `67b79426…` 与清单一致 ✓;`apksigner` 签名摘要 `1a6b5a08…` **与现有 App 完全相同** → 可直接覆盖安装 ✓ |
+
+**完整验收(模拟器,调试包;脚本 `~/clash-node-test/release_acceptance.sh`)**
+
+| 轮 | 内容 | 结果 |
+|---|---|---|
+| 1 | 全量节点 110 个(153s) | **90/110 通过**;**v6 48 个全通过**;HOP/Vision/REALITY **各 26/26**;UDP443 12/14;`c93s4/s5:443` 0/2(一贯不通) |
+| 2 | 端到端 5 站 | 204/204/200/200/200,0.27–0.88s |
+| 3 | 极端:封死 1.1.1.1+8.8.8.8 | google 204 / baidu 200;v4 抽样 7/10(与未封禁一致);规则清零 |
+| 4 | 持续流量 3 分钟 | **36/36 成功,0 失败** |
+| 5 | 稳定性 | 崩溃/ANR 0、`[Smart]` 任务失败 0 |
+
+**两处工具坑(都记进 skill)**
+1. **mihomo 控制器的 `/memory` 会返回 7 个拼接的 JSON 对象** —— `json.load` 必报 `Extra data: line 2 column 1`。正确做法:逐个 `json.JSONDecoder().raw_decode` 后**取最后一个含 `inuse` 的对象**(脚本 `~/clash-node-test/parse_mem.py`)。另:`oslimit` 报 0 属正常 —— 384 MiB 是从 Go 运行时设的(`debug.SetMemoryLimit`),不是 mihomo API 设的。
+2. **`PATCH /releases/tags/<tag>` 返回 404**(即使 `GET` 同 URL 正常)→ 必须先 `GET` 拿 release **id** 再 `PATCH /releases/<id>`;且**不要**把 `python -c` 塞进 `curl -d "$(...)"`(引号必爆 SyntaxError),一律落盘 + `--data-binary @file`。
+
+**长时间浸泡观察**:`~/clash-node-test/soak_monitor.sh`(每 5 分钟探 google/baidu + 内核存活 + 崩溃数 + 内存,连续 3 次异常才告警,最长 12 小时)。
+
 ## 附:本次审计用到的可复现命令
 
 ```bash
