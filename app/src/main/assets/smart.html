@@ -6,130 +6,877 @@
 <title>Smart 运行状态</title>
 <style>
   :root {
-    --bg: #0b0f14; --card: #141a22; --card2: #1b232e; --line: #232d3b;
-    --fg: #e9eef5; --dim: #8695a7; --acc: #4da3ff; --acc2: #7c6bff;
-    --good: #3ecf8e; --warn: #f5b544;
+    /* 核心色彩系统 - 暗色模式 (默认) */
+    --bg: #0c1017;
+    --card: #141b24;
+    --card-subtle: #1a2330;
+    --card-hover: #1e2838;
+    --border: #232e3e;
+    --border-subtle: #1c2533;
+    --line: #222d3e;
+    --fg: #ecf2f8;
+    --fg-sub: #94a3b8;
+    --fg-muted: #627285;
+    --acc: #3b82f6;
+    --acc-soft: rgba(59, 130, 246, 0.12);
+    --good: #10b981;
+    --good-soft: rgba(16, 185, 129, 0.12);
+    --good-bright: #34d399;
+    --warn: #f59e0b;
+    --warn-soft: rgba(245, 158, 11, 0.12);
+    --gold: #f59e0b;
+    --gold-soft: rgba(245, 158, 11, 0.12);
+    --silver: #94a3b8;
+    --silver-soft: rgba(148, 163, 184, 0.12);
+    --bronze: #d97706;
+    --bronze-soft: rgba(217, 119, 6, 0.12);
+    --bar-bg: #1e2838;
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35);
+    --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.25);
     --sa-t: env(safe-area-inset-top, 0px);
+    --sa-b: env(safe-area-inset-bottom, 0px);
+    --card2: var(--card-subtle);
+    --dim: var(--fg-sub);
+    --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px;
+    --t-cap: 11px; --t-meta: 12px; --t-body: 14px; --t-title: 17px; --t-stat: 22px;
+    color-scheme: dark;
   }
+
+  @media (prefers-color-scheme: light) {
+    :root {
+      /* 核心色彩系统 - 浅色模式 */
+      --bg: #f6f8fb;
+      --card: #ffffff;
+      --card-subtle: #f1f4f9;
+      --card-hover: #e8edf5;
+      --border: #e2e8f0;
+      --border-subtle: #edf2f7;
+      --line: #e2e8f0;
+      --fg: #0f172a;
+      --fg-sub: #475569;
+      --fg-muted: #94a3b8;
+      --acc: #2563eb;
+      --acc-soft: rgba(37, 99, 235, 0.08);
+      --good: #059669;
+      --good-soft: rgba(5, 150, 105, 0.08);
+      --good-bright: #10b981;
+      --warn: #d97706;
+      --warn-soft: rgba(217, 119, 6, 0.08);
+      --gold: #d97706;
+      --gold-soft: rgba(217, 119, 6, 0.08);
+      --silver: #64748b;
+      --silver-soft: rgba(100, 116, 139, 0.08);
+      --bronze: #b45309;
+      --bronze-soft: rgba(180, 83, 9, 0.08);
+      --bar-bg: #e2e8f0;
+      --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.06);
+      --shadow-card: 0 4px 16px rgba(15, 23, 42, 0.05);
+      --card2: var(--card-subtle);
+      --dim: var(--fg-sub);
+      --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px;
+      --t-cap: 11px; --t-meta: 12px; --t-body: 14px; --t-title: 17px; --t-stat: 22px;
+      color-scheme: light;
+    }
+  }
+  [data-theme="light"] {
+    --bg: #f3f5f8;
+    --card: #ffffff;
+    --card-subtle: #eef2f6;
+    --card-hover: #e8edf5;
+    --border: #e1e7ee;
+    --border-subtle: #e1e7ee;
+    --line: #e1e7ee;
+    --fg: #1b2430;
+    --fg-sub: #5d6b7c;
+    --fg-muted: #5d6b7c;
+    --acc: #0b6bcb;
+    --acc-soft: rgba(11, 107, 203, 0.08);
+    --good: #0e9f6e;
+    --good-soft: rgba(14, 159, 110, 0.08);
+    --good-bright: #10b981;
+    --warn: #b7791f;
+    --warn-soft: rgba(183, 121, 31, 0.08);
+    --gold: #b7791f;
+    --gold-soft: rgba(183, 121, 31, 0.08);
+    --silver: #5d6b7c;
+    --silver-soft: rgba(93, 107, 124, 0.08);
+    --bronze: #b45309;
+    --bronze-soft: rgba(180, 83, 9, 0.08);
+    --bar-bg: #e1e7ee;
+    --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.06);
+    --shadow-card: 0 4px 16px rgba(15, 23, 42, 0.05);
+    --card2: var(--card-subtle);
+    --dim: var(--fg-sub);
+    --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px;
+    --t-cap: 11px; --t-meta: 12px; --t-body: 14px; --t-title: 17px; --t-stat: 22px;
+    color-scheme: light;
+  }
+
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-  html, body { background: var(--bg); }
+  html, body { background: var(--bg); color: var(--fg); min-height: 100%; }
   body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
+    font-size: var(--t-body);
+    line-height: 1.45;
+    padding: calc(var(--sa-t) + var(--s4)) var(--s4) calc(var(--sa-b) + var(--s5) + var(--s2));
+    max-width: 540px;
+    margin: 0 auto;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* 顶部导航与操作栏 */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--s3);
+  }
+  .title-group {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+  }
+  h1 {
+    font-size: var(--t-title);
+    font-weight: 700;
+    letter-spacing: -0.3px;
     color: var(--fg);
-    font: 14px/1.5 -apple-system, "PingFang SC", "Noto Sans SC", sans-serif;
-    padding: calc(var(--sa-t) + 14px) 14px 30px;
-    max-width: 560px; margin: 0 auto;
   }
-  .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
-  h1 { font-size: 19px; font-weight: 700; letter-spacing: .3px; }
-  .chips { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
-  .chip {
-    font-size: 11px; color: var(--dim); background: var(--card);
-    border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px;
-    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  .header-badge {
+    font-size: var(--t-cap);
+    font-weight: 600;
+    color: var(--acc);
+    background: var(--acc-soft);
+    padding: 2px 7px;
+    border-radius: 6px;
+    letter-spacing: 0.5px;
   }
+  .header-badge:empty { display: none; }
+  span:empty:not(.live-dot):not(.spinner) { display: none; }
   .iconbtn {
-    width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--line);
-    background: var(--card); color: var(--dim); font-size: 15px; cursor: pointer;
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--fg-sub);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: var(--shadow-sm);
+    transition: all 0.2s ease;
   }
-  .iconbtn.spin { animation: r 1s linear infinite; color: var(--acc); }
-  @keyframes r { to { transform: rotate(360deg); } }
+  .iconbtn:active {
+    transform: scale(0.93);
+    background: var(--card-subtle);
+  }
+  .iconbtn svg {
+    transition: transform 0.6s ease;
+  }
+  .iconbtn.spin svg {
+    animation: rotate-spin 0.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+    color: var(--acc);
+  }
+  @keyframes rotate-spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* 系统状态总览条 (收敛顶部胶囊，杜绝空白框 Bug) */
+  .sys-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: var(--s2) var(--s3);
+    margin-bottom: var(--s4);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s2) var(--s3);
+    box-shadow: var(--shadow-sm);
+  }
+  .sys-left {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    min-width: 0;
+  }
+  .live-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--good);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6);
+    animation: pulse-ring 2.4s infinite cubic-bezier(0.4, 0, 0.6, 1);
+    flex-shrink: 0;
+  }
+  .live-dot.idle {
+    background: var(--fg-muted);
+    animation: none;
+    box-shadow: none;
+  }
+  .live-dot.warn {
+    background: var(--warn);
+    animation: none;
+    box-shadow: none;
+  }
+  @keyframes pulse-ring {
+    0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+    70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+    100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+  }
+  .sys-core {
+    font-size: var(--t-meta);
+    font-weight: 600;
+    color: var(--fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sys-core:empty { display: none; }
+  .sys-chips {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    flex-wrap: wrap;
+  }
+  .sys-tag {
+    font-size: var(--t-cap);
+    color: var(--dim);
+    background: var(--card2);
+    border: 1px solid var(--border-subtle);
+    padding: 2px var(--s2);
+    border-radius: 6px;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .sys-tag:empty,
+  #chip-core:empty,
+  #chip-mode:empty,
+  #chip-mem:empty,
+  #chip-sync:empty {
+    display: none !important;
+  }
+
+  /* 分组选择器：分段轨道，选中用卡片表面 + 1px 阴影，无渐变 */
+  .tabs-wrapper {
+    position: relative;
+    margin-bottom: var(--s4);
+  }
   .tabs {
-    display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 12px;
+    display: flex;
+    flex-wrap: wrap;          /* 关键:允许换行,避免最后一项被截断成半张旗 */
+    gap: var(--s1);
+    overflow-x: hidden;
+    padding: var(--s1);
+    background: var(--card2);
+    border-radius: 12px;
     scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
   }
   .tabs::-webkit-scrollbar { display: none; }
   .tab {
-    flex: 0 0 auto; padding: 7px 14px; border-radius: 999px; font-size: 13px;
-    border: 1px solid var(--line); background: var(--card); color: var(--dim); cursor: pointer;
+    flex: 1 1 auto;
+    min-width: 0;             /* 允许收缩,不撑破轨道 */
+    padding: var(--s2) var(--s3);
+    border-radius: 8px;
+    font-size: var(--t-body);
+    font-weight: 500;
+    color: var(--dim);
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
   }
   .tab.on {
-    background: linear-gradient(135deg, var(--acc), var(--acc2));
-    border-color: transparent; color: #fff; font-weight: 600;
+    background: var(--card);
+    color: var(--fg);
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(0,0,0,.18);
   }
+
+  /* 基础卡片规范 */
   .card {
-    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
-    padding: 16px; margin-bottom: 12px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: var(--s4);
+    margin-bottom: var(--s5);
+    box-shadow: var(--shadow-card);
   }
+
+  /* 4 个关键指标卡：保持 2×2 网格；数字与单位底对齐，标签在数字下方 6px */
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--s3);
+  }
+  @media (min-width: 480px) {
+    .stat-grid {
+      grid-template-columns: repeat(4, 1fr);
+    }
+  }
+  .stat, .stat-cell {
+    background: var(--card2);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    padding: var(--s3) var(--s2);
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .stat .n, .stat-val {
+    display: flex;
+    align-items: baseline;
+    gap: 2px;
+    font-size: var(--t-stat);
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    min-width: 0;
+    color: var(--fg);
+  }
+  .stat .n.text-mode, .stat-val .num.text-mode {
+    font-size: var(--t-body);
+    font-weight: 600;
+  }
+  .stat .u, .stat-val .unit {
+    font-size: var(--t-meta);
+    font-weight: 500;
+    color: var(--dim);
+    white-space: nowrap;
+  }
+  .stat .t, .stat-label {
+    margin-top: 6px;
+    font-size: var(--t-cap);
+    font-weight: 500;
+    color: var(--dim);
+    letter-spacing: 0.2px;
+  }
+
+  /* 区块标题栏 */
+  .seclabel {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--s2);
+    margin: 0 0 var(--s2);
+  }
+  .seclabel .l {
+    font-size: var(--t-body);
+    font-weight: 600;
+    color: var(--fg);
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+  }
+  .seclabel .r {
+    font-size: var(--t-meta);
+    color: var(--dim);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 连接调度列表 + 权重排行：序号 | 名称(1fr) | 数值 */
+  .list-card {
+    padding: var(--s2) var(--s4);
+  }
+  .rrow {
+    display: grid;
+    grid-template-columns: 20px 1fr auto;
+    column-gap: var(--s2);
+    row-gap: var(--s1);
+    align-items: center;
+    margin: var(--s3) 0;
+  }
+  .rrow:first-child { margin-top: 0; }
+  .rrow:last-child { margin-bottom: 0; }
+  .rrow .idx {
+    color: var(--dim);
+    font-size: var(--t-meta);
+    font-variant-numeric: tabular-nums;
+  }
+  .rrow .nm {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--t-body);
+    font-weight: 600;
+  }
+  .rrow .nm .rank-badge { margin-left: var(--s2); }
+  .rrow .vv {
+    min-width: 40px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--fg);
+    font-size: var(--t-meta);
+  }
+  .rrow .sub {
+    grid-column: 2 / -1;
+    font-size: var(--t-cap);
+    color: var(--dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1.45;
+  }
+  .lrow {
+    padding: var(--s3) 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .lrow:last-child {
+    border-bottom: 0;
+    padding-bottom: var(--s2);
+  }
+  .lrow:first-child {
+    padding-top: var(--s2);
+  }
+  .lrow-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--s3);
+    margin-bottom: var(--s2);
+  }
+  .lrow-name {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    min-width: 0;
+    flex: 1;
+  }
+  .lrow-idx {
+    font-size: var(--t-cap);
+    font-weight: 600;
+    color: var(--dim);
+    width: 18px;
+    height: 18px;
+    border-radius: 6px;
+    background: var(--card2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .lrow-title {
+    font-size: var(--t-body);
+    font-weight: 600;
+    color: var(--fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .rank-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 5px;
+    flex-shrink: 0;
+    line-height: 1.4;
+  }
+  .rank-badge.most {
+    background: var(--good-soft);
+    color: var(--good-bright);
+    border: 1px solid rgba(16, 185, 129, 0.2);
+  }
+  .rank-badge.occ {
+    background: var(--acc-soft);
+    color: var(--acc);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+  }
+  .rank-badge.rare {
+    background: var(--card-subtle);
+    color: var(--fg-muted);
+    border: 1px solid var(--border-subtle);
+  }
+
+  .lrow-val {
+    flex-shrink: 0;
+    font-size: var(--t-meta);
+    color: var(--dim);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    min-width: 40px;
+  }
+  .lrow-val b {
+    color: var(--fg);
+    font-weight: 600;
+  }
+
+  .lrow-hosts {
+    font-size: var(--t-cap);
+    color: var(--dim);
+    margin: 2px 0 var(--s2) 26px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: var(--s1);
+  }
+  .lrow-hosts svg {
+    flex-shrink: 0;
+    color: var(--dim);
+  }
+
+  .bar-wrap {
+    grid-column: 1 / -1;
+    height: 4px;
+    background: var(--line);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-left: 0;
+  }
+  .bar {
+    height: 100%;
+    border-radius: 2px;
+    background: var(--acc);
+    transition: width .5s ease;
+  }
+
+  /* 空状态设计 (解决开发者反馈：下半页挤、纯色块生硬、空连接无指导) */
+  .empty-card {
+    text-align: center;
+    padding: 36px 20px;
+    background: var(--card);
+  }
+  .empty-icon {
+    width: 48px;
+    height: 48px;
+    margin: 0 auto var(--s3);
+    color: var(--dim);
+    background: var(--card2);
+    border: 1px solid var(--border-subtle);
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .empty-title {
+    font-size: var(--t-body);
+    font-weight: 600;
+    color: var(--fg);
+    margin-bottom: var(--s2);
+  }
+  .empty-desc {
+    font-size: var(--t-meta);
+    color: var(--dim);
+    line-height: 1.45;
+    max-width: 320px;
+    margin: 0 auto;
+  }
+
+  /* 提示与通知 Banner */
   .banner {
-    border: 1px solid var(--line); border-radius: 14px; padding: 16px;
-    background: var(--card); margin-bottom: 12px; font-size: 13px; color: var(--dim); line-height: 1.8;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: var(--s4);
+    background: var(--card);
+    margin-bottom: var(--s4);
+    font-size: var(--t-body);
+    color: var(--dim);
+    line-height: 1.45;
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s3);
+    box-shadow: var(--shadow-sm);
   }
   .banner b { color: var(--warn); }
-  .stat-row { display: flex; gap: 10px; }
-  .stat { text-align: center; flex: 1; background: var(--card2); border-radius: 10px; padding: 8px 2px; }
-  .stat .n { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
-  .stat .t { font-size: 10px; color: var(--dim); }
-  .seclabel { display: flex; justify-content: space-between; align-items: center; margin: 2px 2px 8px; }
-  .seclabel .l { font-size: 13px; font-weight: 600; }
-  .live-dot {
-    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
-    background: var(--good); margin-right: 5px; vertical-align: 1px;
-    animation: pulse 2s ease infinite;
+  .banner-icon { flex-shrink: 0; margin-top: 2px; }
+
+  /* 累计权重排行 (现代折叠面板与颁奖台) */
+  .ranking-panel {
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--card);
+    overflow: hidden;
+    margin-bottom: var(--s5);
+    box-shadow: var(--shadow-card);
   }
-  @keyframes pulse { 50% { opacity: .35; } }
-  .seclabel .r { font-size: 11px; color: var(--dim); }
-  .lrow { margin: 10px 0; }
-  .lrow .top { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; margin-bottom: 3px; }
-  .lrow .name { min-width: 0; word-break: break-all; font-weight: 600; display: flex; align-items: baseline; gap: 6px; }
-  .lrow .idx { color: var(--dim); font-weight: 400; font-size: 11px; }
-  .lrow .val { flex: 0 0 auto; color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; }
-  .lrow .val b { color: var(--fg); font-weight: 600; }
-  .lrow .sub {
-    font-size: 11px; color: var(--dim); margin: 2px 0 4px; word-break: break-all;
-    display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden;
+  .ranking-panel > summary {
+    list-style: none;
+    padding: var(--s3) var(--s4);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    user-select: none;
+    background: var(--card);
+    transition: background 0.2s ease;
   }
-  .bar-wrap { height: 5px; background: var(--card2); border-radius: 3px; overflow: hidden; }
-  .bar { height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--good), #8ce8c1); transition: width .5s ease; }
-  .rank { font-weight: 600; margin-right: 6px; font-size: 11px; }
-  .rank.most { color: var(--good); }
-  .rank.occ { color: var(--acc); }
-  .rank.rare { color: var(--dim); }
-  details.ranking, details.unused { margin-top: 10px; }
-  details summary { color: var(--dim); font-size: 12px; cursor: pointer; }
-  .unused-list, .rank-body { margin-top: 10px; word-break: break-all; }
-  .rank-body { background: var(--card2); border-radius: 12px; padding: 12px; }
+  .ranking-panel > summary::-webkit-details-marker { display: none; }
+  .ranking-panel > summary:active { background: var(--card-subtle); }
+  .ranking-panel[open] > summary {
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .summary-left {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+  }
+  .summary-title {
+    font-size: var(--t-body);
+    font-weight: 600;
+    color: var(--fg);
+  }
+  .summary-badge {
+    font-size: var(--t-cap);
+    color: var(--dim);
+  }
+  .chevron {
+    color: var(--fg-muted);
+    transition: transform 0.25s ease;
+  }
+  .ranking-panel[open] .chevron {
+    transform: rotate(180deg);
+  }
+
+  .rank-content {
+    padding: var(--s4);
+  }
+
+  /* 前三名卡片（无渐变，单色表面） */
+  .podium-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--s2);
+    margin-bottom: var(--s4);
+  }
+  .podium-card {
+    background: var(--card2);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    padding: var(--s3) var(--s2);
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    position: relative;
+    overflow: hidden;
+  }
+  .podium-card.gold,
+  .podium-card.silver,
+  .podium-card.bronze {
+    background: var(--card2);
+  }
+  .podium-medal {
+    font-size: 18px;
+    margin-bottom: 4px;
+  }
+  .podium-name {
+    font-size: var(--t-meta);
+    font-weight: 600;
+    color: var(--fg);
+    line-height: 1.3;
+    margin-bottom: var(--s2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    word-break: break-all;
+    min-height: 31px;
+  }
+  .podium-score {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--good);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 其余排名行 */
+  .rank-row {
+    padding: var(--s2) 0;
+  }
+  .rank-row-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: var(--t-meta);
+    margin-bottom: var(--s1);
+  }
+  .rank-row-name {
+    color: var(--fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 70%;
+  }
+  .rank-row-name .num-idx {
+    color: var(--dim);
+    margin-right: var(--s1);
+    font-weight: 500;
+  }
+  .rank-row-val {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    font-variant-numeric: tabular-nums;
+    color: var(--fg);
+    font-weight: 600;
+    min-width: 40px;
+    text-align: right;
+  }
+
+  /* 未入榜节点 */
+  .unused-box {
+    margin-top: var(--s4);
+    padding-top: var(--s3);
+    border-top: 1px solid var(--border-subtle);
+  }
+  .unused-toggle {
+    font-size: var(--t-meta);
+    color: var(--dim);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    user-select: none;
+    padding: var(--s1) 0;
+  }
+  .unused-toggle::-webkit-details-marker { display: none; }
+  .unused-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s2);
+    margin-top: var(--s2);
+    max-height: 140px;
+    overflow-y: auto;
+    padding-right: var(--s1);
+  }
+  .unused-chip {
+    font-size: var(--t-cap);
+    color: var(--dim);
+    background: var(--card2);
+    border: 1px solid var(--border-subtle);
+    padding: 3px var(--s2);
+    border-radius: 6px;
+    white-space: nowrap;
+  }
   .unused-list {
-    color: var(--dim); font-size: 12px; line-height: 1.9;
-    max-height: 160px; overflow-y: auto;
+    color: var(--dim);
+    font-size: var(--t-meta);
+    line-height: 1.45;
+    margin-top: var(--s3);
+    max-height: 160px;
+    overflow-y: auto;
   }
-  .podium { display: flex; gap: 8px; margin-bottom: 10px; }
-  .podium .p {
-    flex: 1; min-width: 0; background: var(--card); border: 1px solid var(--line);
-    border-radius: 12px; padding: 8px 6px; text-align: center; overflow: hidden;
+
+  /* 结构化页脚机制说明 */
+  .foot-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: var(--s3) var(--s4);
+    margin-top: var(--s5);
+    box-shadow: var(--shadow-sm);
   }
-  .podium .medal { font-size: 16px; }
-  .podium .nm {
-    font-size: 12px; font-weight: 600; margin: 2px 0; word-break: break-all;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  .foot-header {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    font-size: var(--t-meta);
+    font-weight: 600;
+    color: var(--dim);
+    margin-bottom: var(--s2);
   }
-  .podium .w { font-size: 14px; font-weight: 700; color: var(--good); }
-  .rrow { margin: 8px 0; }
-  .rrow .top { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 3px; }
-  .rrow .nm { word-break: break-all; }
-  .rrow .vv { color: var(--dim); }
-  .foot { color: #5c6a7a; font-size: 11px; margin-top: 20px; line-height: 1.8; }
-  .spin {
-    display: inline-block; width: 12px; height: 12px; border: 2px solid var(--line);
-    border-top-color: var(--acc); border-radius: 50%; animation: r 1s linear infinite; vertical-align: -2px;
+  .foot-grid {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s2);
+  }
+  .foot-item {
+    font-size: var(--t-cap);
+    line-height: 1.45;
+    color: var(--dim);
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s2);
+  }
+  .foot-item b {
+    color: var(--fg-sub);
+  }
+  .foot-bullet {
+    color: var(--acc);
+    font-size: 10px;
+    margin-top: 1px;
+  }
+
+  /* 辅助加载微动效 */
+  .spinner {
+    width: var(--t-body);
+    height: var(--t-body);
+    border: 2px solid var(--border);
+    border-top-color: var(--acc);
+    border-radius: 50%;
+    animation: rotate-spin 0.8s linear infinite;
+    display: inline-block;
+    vertical-align: -2px;
+    margin-right: var(--s2);
   }
 </style>
 </head>
 <body>
+
+<!-- 顶部导航栏 -->
 <div class="topbar">
-  <h1>Smart 运行状态</h1>
-  <button class="iconbtn" id="refresh" onclick="tick(true)">⟳</button>
+  <div class="title-group">
+    <h1>Smart 运行状态</h1>
+    <span class="header-badge">LIVE</span>
+  </div>
+  <button class="iconbtn" id="refresh" onclick="tick(true)" title="立即刷新" aria-label="立即刷新">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+      <path d="M3 3v5h5"/>
+      <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
+      <path d="M16 21h5v-5"/>
+    </svg>
+  </button>
 </div>
-<div class="chips">
-  <span class="chip" id="chip-core">连接中…</span>
-  <span class="chip" id="chip-mode"></span>
-  <span class="chip" id="chip-mem"></span>
-  <span class="chip" id="chip-sync"></span>
+
+<!-- 系统集成状态条 (防止空节点边框 Bug，统一视觉权重) -->
+<div class="sys-card">
+  <div class="sys-left">
+    <span class="live-dot" id="sys-status-dot"></span>
+    <span class="sys-core" id="chip-core">连接内核中…</span>
+  </div>
+  <div class="sys-chips">
+    <span class="sys-tag" id="chip-mode"></span>
+    <span class="sys-tag" id="chip-mem"></span>
+    <span class="sys-tag" id="chip-sync"></span>
+  </div>
 </div>
-<div id="content"><div class="banner"><span class="spin"></span> 正在连接本地内核…</div></div>
-<div class="foot">
-  实时调度每 5 秒刷新:显示此刻各节点正在承载的连接与流量(同一分组多节点并行使用是 smart 的正常工作方式);切换分组瞬时完成。<br>
-  累计排行由内核每 5 分钟统计一次,数据存在本机、按订阅隔离。
+
+<!-- 主内容动态挂载容器 -->
+<div id="content">
+  <div class="banner">
+    <span class="spinner"></span> 正在连接本地内核服务…
+  </div>
 </div>
+
+<!-- 规范化工作机制说明页脚 -->
+<div class="foot-card">
+  <div class="foot-header">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+    </svg>
+    <span>Smart 机制说明</span>
+  </div>
+  <div class="foot-grid">
+    <div class="foot-item">
+      <span class="foot-bullet">◆</span>
+      <div><b>实时调度 (5秒)：</b>各节点承载的活跃连接与实时吞吐；多节点并发分流是 Smart 模式的正常特性。</div>
+    </div>
+    <div class="foot-item">
+      <span class="foot-bullet">◆</span>
+      <div><b>累计学习 (5分钟)：</b>内核根据历史测速与稳定性持续微调权重；数据保存在本机且按订阅独立隔离。</div>
+    </div>
+  </div>
+</div>
+
 <script>
 "use strict";
 const BASE = "http://127.0.0.1:9090";
@@ -152,7 +899,6 @@ let pageHidden = document.hidden;
 let lastTestFetchAt = 0;   // /proxies(全量节点含历史)最多每分钟拉一次
 
 // 页面不可见时所有定时器空转返回;回到前台立即补一次刷新。
-// (Activity 侧也调了 webView.pauseTimers(),这里是第二道保险)
 document.addEventListener("visibilitychange", () => {
   pageHidden = document.hidden;
   if (!pageHidden) tick();
@@ -164,7 +910,7 @@ const rankCN = s => RANK_CN[s] || (s || "");
 const rankCls = s => s === "MostUsed" ? "most" : (s === "OccasionalUsed" ? "occ" : "rare");
 
 function fmtAgo(ms) {
-  if (ms < 0 || isNaN(ms)) return "—";
+  if (ms < 0 || isNaN(ms)) return "尚未测速";
   const m = Math.floor(ms / 60000);
   if (m < 1) return "刚刚";
   if (m < 60) return m + " 分钟前";
@@ -173,16 +919,30 @@ function fmtAgo(ms) {
   return Math.floor(h / 24) + " 天前";
 }
 
+function parseAgo(ms) {
+  if (ms == null || ms < 0 || isNaN(ms)) return { num: "尚未测速", unit: "" };
+  const m = Math.floor(ms / 60000);
+  if (m < 1) return { num: "刚刚", unit: "" };
+  if (m < 60) return { num: "" + m, unit: "分钟前" };
+  const h = Math.floor(m / 60);
+  if (h < 24) return { num: "" + h, unit: "小时前" };
+  return { num: "" + Math.floor(h / 24), unit: "天前" };
+}
+
 function fmtBytes(b) {
-  if (!b || b <= 0) return "0B";
+  const p = parseBytes(b);
+  return p.num + " " + p.unit;
+}
+
+function parseBytes(b) {
+  if (!b || b <= 0) return { num: "0", unit: "B" };
   const u = ["B", "KB", "MB", "GB", "TB"];
   let i = 0; let v = b;
   while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
-  return (i === 0 ? v : v.toFixed(1)) + u[i];
+  return { num: i === 0 ? "" + v : v.toFixed(1), unit: u[i] };
 }
 
 async function jget(p, timeout = 8000) {
-  // 带超时:内核卡住/接口挂起时不会让"刷新"永远转圈
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), timeout);
   try {
@@ -191,18 +951,29 @@ async function jget(p, timeout = 8000) {
     return r.json();
   } finally { clearTimeout(timer); }
 }
-function banner(html) { $("content").innerHTML = '<div class="banner">' + html + "</div>"; }
+
+function banner(html) {
+  $("content").innerHTML = '<div class="banner"><span class="banner-icon">⚠️</span><div>' + html + '</div></div>';
+}
 
 async function loadMeta() {
-  if (pageHidden) return;          // 后台不轮询
+  if (pageHidden) return;
   try {
     const v = await jget("/version");
     const mode = await jget("/configs").then(c => c.mode).catch(() => "?");
-    const m = { rule: "规则分流", global: "全局", direct: "直连" };
-    // /version 的 meta 是布尔值,不要对它调字符串方法
-    $("chip-core").textContent = "内核 " + (v.version || "");
+    const m = { rule: "规则分流", global: "全局代理", direct: "直连" };
+    $("chip-core").textContent = "内核 " + (v.version || "就绪");
     $("chip-mode").textContent = "模式 " + (m[mode] || mode);
-  } catch (e) { $("chip-core").textContent = "未连接"; }
+    const dot = $("sys-status-dot");
+    if (dot) {
+      dot.classList.remove("warn");
+      dot.classList.remove("idle");
+    }
+  } catch (e) {
+    $("chip-core").textContent = "内核未连接";
+    const dot = $("sys-status-dot");
+    if (dot) dot.classList.add("warn");
+  }
 }
 
 async function loadGroups() {
@@ -215,10 +986,9 @@ function renderTabs() {
   const el = $("tabs");
   if (!el) return;
   el.innerHTML = groups.map((g, i) =>
-    '<div class="tab' + (g.name === current ? " on" : "") + '" data-i="' + i + '">' + esc(g.name) + "</div>").join("");
+    '<button class="tab' + (g.name === current ? " on" : "") + '" data-i="' + i + '">' + esc(g.name) + "</button>").join("");
 }
 
-/* 切换分组:有缓存数据就立即渲染(零等待),再后台刷新 */
 function selectGroup(i) {
   current = groups[i].name;
   renderTabs();
@@ -228,10 +998,9 @@ function selectGroup(i) {
 
 document.addEventListener("click", e => {
   const t = e.target.closest(".tab");
-  if (t) selectGroup(+t.dataset.i);
+  if (t && t.dataset.i !== undefined) selectGroup(+t.dataset.i);
 });
 
-/* 一次 /connections 聚合出所有 smart 分组的实时数据 */
 function aggregateAll(conns) {
   const data = {};
   for (const g of groups) data[g.name] = { map: new Map(), connCount: conns.length };
@@ -259,7 +1028,7 @@ function aggregateAll(conns) {
 }
 
 async function fastTick() {
-  if (pageHidden) return;          // 后台不轮询
+  if (pageHidden) return;
   if (fastBusy) return;
   const now = Date.now();
   if (now - lastFetchAt < 1200) { renderLive(); return; }
@@ -273,48 +1042,72 @@ async function fastTick() {
     renderLive();
   } catch (e) {
     const live = $("live");
-    if (live) live.innerHTML = '<div class="banner"><b>无法连接本地内核 (127.0.0.1:9090)。</b><br>原因: ' + esc(e.message)
-      + "<br>请先在主界面启动 VPN;内核运行后本页会自动恢复。</div>";
+    if (live) live.innerHTML = '<div class="banner"><span class="banner-icon">⚠️</span><div><b>无法连接本地内核 (127.0.0.1:9090)</b><br>原因: ' + esc(e.message)
+      + "<br>请先在主界面启动 VPN，内核正常运行后本页将自动恢复连接。</div></div>";
   }
   fastBusy = false;
 }
 
-/* 渲染当前分组:纯用缓存,瞬时完成 */
 function renderLive() {
   const hero = $("hero"), live = $("live");
   if (!live || !hero || !current) return;
   const d = liveData[current];
   if (!d) {
     hero.innerHTML = "";
-    live.innerHTML = '<div class="banner"><span class="spin"></span> 正在获取该分组实时数据…</div>';
+    live.innerHTML = '<div class="banner"><span class="spinner"></span> 正在同步该分组实时数据…</div>';
     return;
   }
-  const testAgo = groupLastTest ? fmtAgo(Date.now() - groupLastTest) : "尚未测速";
-  hero.innerHTML = '<div class="card"><div class="stat-row">'
-    + '<div class="stat"><div class="n">' + d.map.size + '</div><div class="t">活跃节点</div></div>'
-    + '<div class="stat"><div class="n">' + d.connCount + '</div><div class="t">全部连接</div></div>'
-    + '<div class="stat"><div class="n">' + fmtBytes(d.total) + '</div><div class="t">组内累计流量</div></div>'
-    + '<div class="stat"><div class="n" style="font-size:13px;line-height:1.4">' + esc(testAgo) + '</div><div class="t">距上次测速</div></div>'
-    + "</div></div>";
+
+  const traffic = parseBytes(d.total);
+  const ago = groupLastTest ? fmtAgo(Date.now() - groupLastTest) : "尚未测速";
+  const agoParsed = parseAgo(groupLastTest ? (Date.now() - groupLastTest) : null);
+
+  // 2×2 网格；数字在上、单位底对齐、标签在数字下方 6px
+  hero.innerHTML = '<div class="card">'
+    + '<div class="stat-grid">'
+    + '<div class="stat"><div class="n">' + d.map.size + '<span class="u">个</span></div><div class="t">活跃节点</div></div>'
+    + '<div class="stat"><div class="n">' + d.connCount + '<span class="u">条</span></div><div class="t">全部连接</div></div>'
+    + '<div class="stat"><div class="n">' + traffic.num + '<span class="u">' + esc(traffic.unit) + '</span></div><div class="t">组内累计流量</div></div>'
+    + '<div class="stat"><div class="n' + (agoParsed.unit ? '' : ' text-mode') + '">' + esc(agoParsed.num)
+    + (agoParsed.unit ? '<span class="u">' + esc(agoParsed.unit) + '</span>' : '') + '</div><div class="t">距上次测速</div></div>'
+    + '</div></div>';
 
   if (!d.rows.length) {
-    live.innerHTML = '<div class="banner">该分组此刻没有活跃连接——打开几个网站,这里就会实时显示各节点正在承载的流量与目标站点。</div>';
+    live.innerHTML = '<div class="seclabel">'
+      + '<span class="l"><span class="live-dot idle"></span>实时调度</span>'
+      + '<span class="r">' + (groupLastTest ? "距上次测速 " + esc(ago) : "尚未测速") + '</span>'
+      + '</div>'
+      + '<div class="card empty-card">'
+      + '  <div class="empty-icon">'
+      + '    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+      + '      <circle cx="12" cy="12" r="10"/><path d="m4.93 4.93 4.24 4.24"/><path d="m14.83 9.17 4.24-4.24"/><path d="m14.83 14.83 4.24 4.24"/><path d="m9.17 14.83-4.24 4.24"/>'
+      + '    </svg>'
+      + '  </div>'
+      + '  <div class="empty-title">当前无活跃连接</div>'
+      + '  <div class="empty-desc">该分组处于就绪待命状态。在后台打开任意网页或发起网络请求，此处将实时展示节点分流与流量分布。</div>'
+      + '</div>';
     return;
   }
+
   const max = Math.max(1, d.rows[0][1].up + d.rows[0][1].down);
   const rk = rankMaps[current] || {};
-  const ago = groupLastTest ? fmtAgo(Date.now() - groupLastTest) : null;
-  let s = '<div class="seclabel"><span class="l"><span class="live-dot"></span>实时调度</span>'
+  let s = '<div class="seclabel">'
+    + '<span class="l"><span class="live-dot"></span>实时调度</span>'
     + '<span class="r">'
-    + (ago ? "距上次测速 " + ago + " · " : "尚未测速 · ")
-    + d.rows.length + ' 个节点在承载</span></div><div class="card">';
+    + (groupLastTest ? "距上次测速 " + esc(ago) + " · " : "尚未测速 · ")
+    + d.rows.length + ' 个节点在承载</span>'
+    + '</div>'
+    + '<div class="card list-card">';
+
   d.rows.forEach(([name, e], i) => {
     const t = e.up + e.down;
     const r = rk[name];
-    s += '<div class="lrow"><div class="top"><span class="name"><span class="idx">' + (i + 1) + '.</span>'
-      + "<span>" + esc(name) + "</span>"
-      + (r ? '<span class="rank ' + rankCls(r.Rank) + '">' + esc(rankCN(r.Rank)) + "</span>" : "")
-      + '</span><span class="val"><b>' + e.n + "</b> 条 · " + fmtBytes(t) + "</span></div>"
+    const flow = parseBytes(t);
+    s += '<div class="rrow"><span class="idx">' + (i + 1) + '</span>'
+      + '<span class="nm" title="' + esc(name) + '">' + esc(name)
+      + (r ? '<span class="rank-badge ' + rankCls(r.Rank) + '">' + esc(rankCN(r.Rank)) + '</span>' : '')
+      + '</span>'
+      + '<span class="vv">' + e.n + " 条 · " + flow.num + flow.unit + "</span>"
       + (e.hosts.length ? '<div class="sub">' + e.hosts.map(esc).join(" · ") + "</div>" : "")
       + '<div class="bar-wrap"><div class="bar" style="width:' + Math.max(2, Math.round(t / max * 100)) + '%"></div></div></div>';
   });
@@ -322,7 +1115,7 @@ function renderLive() {
 }
 
 async function slowTick() {
-  if (pageHidden) return;          // 后台不轮询
+  if (pageHidden) return;
   try {
     const rankEl = $("rank");
     if (!rankEl || !current) return;
@@ -335,8 +1128,6 @@ async function slowTick() {
     const allNodes = g.all || [];
     const upd = d.last_updated ? new Date(d.last_updated * 1000) : null;
 
-    // 距上次测速:各节点延迟历史里最新的一次时间戳
-    // (放在空排行早退之前,保证任何状态下都更新;/proxies 是全量节点 JSON,节流到 60 秒一次)
     if (Date.now() - lastTestFetchAt > 60000) {
       lastTestFetchAt = Date.now();
       try {
@@ -355,38 +1146,33 @@ async function slowTick() {
       } catch (e2) { groupLastTest = null; }
     }
 
+    const updText = upd ? upd.getHours().toString().padStart(2, "0") + ":" + upd.getMinutes().toString().padStart(2, "0") : "—";
+
     if (!ranked.length) {
-      rankEl.innerHTML = '<details class="ranking"><summary>累计权重排行(每 5 分钟统计)</summary><div class="rank-body">'
-        + '<div class="banner" style="margin:0">'
-        + esc(d.message ? (MSG_CN[d.message] || "内核提示:" + d.message) : "暂无权重数据")
-        + "<br>正常上网几分钟后,内核会自动为使用过的节点计分。</div></div></details>";
+      rankEl.innerHTML = '<div class="seclabel"><span class="l">权重排行</span><span class="r">更新 ' + updText + "</span></div>"
+        + '<div class="banner"><span class="banner-icon">ℹ️</span><div>'
+        + esc(d.message ? (MSG_CN[d.message] || "内核提示: " + d.message) : "暂无权重数据")
+        + '<br><span style="font-size:var(--t-cap);color:var(--dim)">正常上网数分钟后，内核将自动为使用过的节点学习评分与调度权重。</span>'
+        + "  </div></div>";
       return;
     }
-    const top = ranked.slice(0, Math.min(3, ranked.length));
-    const medals = ["🥇", "🥈", "🥉"];
-    let body = '<div class="podium">' + top.map((it, i) => {
+
+    const shown = ranked.slice(0, 3 + RANK_SHOW);
+    let body = shown.map((it, i) => {
       const w = Math.max(0, Math.min(100, it.Weight || 0));
-      return '<div class="p"><div class="medal">' + medals[i] + "</div>"
-        + '<div class="nm">' + esc(it.Name) + "</div>"
-        + '<div class="w">' + Math.round(w) + "</div></div>";
-    }).join("") + "</div>";
-    const rest = ranked.slice(3, 3 + RANK_SHOW);
-    body += rest.map((it, i) => {
-      const w = Math.max(0, Math.min(100, it.Weight || 0));
-      return '<div class="rrow"><div class="top"><span class="nm"><span style="color:var(--dim)">' + (i + 4)
-        + '.</span> ' + esc(it.Name) + "</span>"
-        + '<span class="vv"><span class="rank ' + rankCls(it.Rank) + '">' + esc(rankCN(it.Rank)) + "</span>"
-        + Math.round(w) + "</span></div>"
-        + '<div class="bar-wrap" style="height:4px"><div class="bar" style="width:' + Math.max(2, w) + '%"></div></div></div>';
+      return '<div class="rrow"><span class="idx">' + (i + 1) + '</span><span class="nm">' + esc(it.Name) + "</span>"
+        + '<span class="vv">' + Math.round(w) + "%</span>"
+        + '<div class="bar-wrap"><div class="bar" style="width:' + Math.max(2, Math.round(w)) + '%"></div></div></div>';
     }).join("");
+
     const rankedNames = new Set(ranked.map(i => i.Name));
     const unused = allNodes.filter(n => !rankedNames.has(n));
-    if (unused.length)
-      body += '<details class="unused" style="margin-top:8px"><summary>未进入排行的节点(' + unused.length + "个)</summary>"
-        + '<div class="unused-list">' + unused.map(esc).join("<br>") + "</div></details>";
-    rankEl.innerHTML = '<details class="ranking"><summary>累计权重排行(每 5 分钟统计 · 更新 '
-      + (upd ? upd.getHours().toString().padStart(2, "0") + ":" + upd.getMinutes().toString().padStart(2, "0") : "—")
-      + ')</summary><div class="rank-body">' + body + "</div></details>";
+    if (unused.length) {
+      body += '<div class="unused-list">未入榜 ' + unused.length + " · " + unused.map(esc).join(" · ") + "</div>";
+    }
+
+    rankEl.innerHTML = '<div class="seclabel"><span class="l">权重排行</span><span class="r">更新 ' + esc(updText) + "</span></div>"
+      + '<div class="card">' + body + "</div>";
   } catch (e) {
     const r = $("rank");
     if (r) r.innerHTML = "";
@@ -401,15 +1187,15 @@ async function tick(manual) {
   try {
     await loadGroups();
     if (!$("tabs")) {
-      $("content").innerHTML = '<nav class="tabs" id="tabs"></nav><div id="hero"></div><div id="live"></div><div id="rank"></div>';
+      $("content").innerHTML = '<div class="tabs-wrapper"><nav class="tabs" id="tabs"></nav></div><div id="hero"></div><div id="live"></div><div id="rank"></div>';
     }
     renderTabs();
     await fastTick();
     await slowTick();
     $("chip-sync").textContent = "已同步 " + new Date().toLocaleTimeString("zh-CN", { hour12: false });
   } catch (e) {
-    banner("<b>无法连接本地内核 (127.0.0.1:9090)。</b><br>原因: " + esc(e.message)
-      + "<br>请先在主界面启动 VPN;内核运行后本页会自动恢复。");
+    banner("<b>无法连接本地内核 (127.0.0.1:9090)</b><br>原因: " + esc(e.message)
+      + "<br>请先在主界面启动 VPN，内核启动后本页会自动恢复连接。");
   }
   syncing = false;
   if (btn) setTimeout(() => btn.classList.remove("spin"), 600);
@@ -420,14 +1206,13 @@ tick();
 setInterval(fastTick, LIVE_INTERVAL);
 setInterval(slowTick, 15000);
 setInterval(loadMeta, 30000);
-/* 每 5 分钟重读分组列表:内核重启/换配置后标签自动跟上,不再卡在已失效的分组上 */
 setInterval(async () => {
   if (pageHidden) return;
   try {
     await loadGroups();
     renderTabs();
     await slowTick();
-  } catch (e) { /* 静默:下一轮再试 */ }
+  } catch (e) { /* 静默轮询 */ }
 }, 300000);
 </script>
 </body>
