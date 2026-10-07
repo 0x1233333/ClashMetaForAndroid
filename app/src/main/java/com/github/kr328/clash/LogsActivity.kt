@@ -9,6 +9,7 @@ import com.github.kr328.clash.design.LogsDesign
 import com.github.kr328.clash.design.R
 import com.github.kr328.clash.design.model.LogFile
 import com.github.kr328.clash.design.ui.ToastDuration
+import com.github.kr328.clash.diag.DiagExporter
 import com.github.kr328.clash.util.logsDir
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
@@ -57,6 +58,17 @@ class LogsActivity : BaseActivity<LogsDesign>() {
                         }
                         is LogsDesign.Request.Share -> {
                             shareFile(design, it.file)
+                        }
+                        LogsDesign.Request.ExportDiag -> {
+                            val zip = try {
+                                withContext(Dispatchers.IO) {
+                                    DiagExporter.buildBundle(this@LogsActivity)
+                                }
+                            } catch (e: Exception) {
+                                design.showToast(R.string.share_failed, ToastDuration.Long)
+                                null
+                            }
+                            if (zip != null) shareFile(design, zip)
                         }
                     }
                 }

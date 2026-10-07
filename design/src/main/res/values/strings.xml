@@ -122,6 +122,7 @@
     <string name="share">Share</string>
     <string name="share_failed">Share failed</string>
     <string name="share_latest_log">Share latest log</string>
+    <string name="export_diag">Export diagnostic package</string>
     <string name="no_logs_to_share">No logs to share</string>
 
     <string name="behavior">Behavior</string>
