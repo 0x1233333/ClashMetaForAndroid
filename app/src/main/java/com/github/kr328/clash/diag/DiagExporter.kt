@@ -35,6 +35,13 @@ object DiagExporter {
     private const val HTTP_TIMEOUT_MS = 1500
     private val LOG_NAME = Regex("clash-(\\d+)\\.log")
     private val NODE_FIELD = Regex(""""node"\s*:\s*"((?:\\.|[^"\\])*)"""")
+    private val YAML_NAME = Regex("""(?m)^\s*-?\s*name\s*:\s*(.+?)\s*$""")
+    private val HOSTLIKE =
+        Regex("""\b[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+\b""")
+    private val NAME_STOPLIST = setOf(
+        "DIRECT", "REJECT", "PROXY", "GLOBAL", "FINAL", "PASS", "COMPATIBLE",
+        "select", "url-test", "fallback", "load-balance", "relay", "direct",
+    )
     private val JSON_STRING = Regex(""""((?:\\.|[^"\\])*)"""")
     private val SCHEMA_KEYS = setOf(
         "ts", "type", "groups", "node", "weight", "delay", "alive",
@@ -148,6 +155,11 @@ object DiagExporter {
 
         val nodeNames = LinkedHashSet<String>()
         if (redact) {
+            // 名字清单三源动态合并(代码里不写死任何具体名字):
+            //   ① 配置里的 name: 字段(运行时读) ② 设备内持久化清单 ③ 数据文件里出现过的名字
+            val persisted = persistedNames(diagDir)
+            nodeNames.addAll(configNodeNames(context))
+            nodeNames.addAll(persisted)
             for (raw in listOfNotNull(routingRaw, weightsRaw, crashesRaw)) {
                 nodeNames.addAll(collectNodeNames(String(raw, Charsets.UTF_8)))
             }
@@ -155,6 +167,7 @@ object DiagExporter {
                 val text = extra.text ?: continue
                 nodeNames.addAll(collectNodeNames(text))
             }
+            if (nodeNames.size > persisted.size) savePersistedNames(diagDir, nodeNames)
         }
 
         val parts = ArrayList<Part>()
@@ -366,12 +379,11 @@ object DiagExporter {
         val jsonish = fileName.endsWith(".json") || fileName.endsWith(".jsonl") ||
             trimmed.startsWith("{") || trimmed.startsWith("[")
         var out = if (jsonish) {
-            val redacted = redact(text)
+            // 先抹域名形状,再按名字清单替换(两步都做,域名不因清单非空而漏网)
+            val redacted = redact(HOSTLIKE.replace(text, "<host>"))
             if (nodeNames.isEmpty()) redacted else scrubNames(redacted, nodeNames)
-        } else if (nodeNames.isEmpty()) {
-            text
         } else {
-            replaceNames(text, nodeNames)
+            replaceNames(HOSTLIKE.replace(text, "<host>"), nodeNames)
         }
         if (!jsonish && out.contains("\"node\"")) out = redact(out)
         return DiagRedact.secrets(out)
@@ -689,6 +701,59 @@ object DiagExporter {
             pm?.isPowerSaveMode == true
         } catch (e: Exception) {
             false
+        }
+    }
+
+    /**
+     * 配置里出现过的节点/分组名 —— **运行时读取**,代码里不写死任何具体名字。
+     * 来源:processing/imported/pending 下的 config.yaml 的 `name:` 字段。
+     */
+    private fun configNodeNames(context: Context): Set<String> {
+        val out = LinkedHashSet<String>()
+        val roots = listOf("processing", "imported", "pending")
+        for (r in roots) {
+            val root = File(context.filesDir, r)
+            val dirs = if (r == "pending") root.listFiles()?.toList().orEmpty() else listOf(root)
+            for (d in dirs) {
+                val f = File(d, "config.yaml")
+                if (!f.isFile || f.length() > 32L * 1024 * 1024) continue
+                val text = try {
+                    f.readText(Charsets.UTF_8)
+                } catch (e: Exception) {
+                    continue
+                }
+                for (m in YAML_NAME.findAll(text)) {
+                    val n = m.groupValues[1].trim().trim('"').trim('\'')
+                    if (n.length in 3..64 && n !in NAME_STOPLIST) out.add(n)
+                }
+            }
+        }
+        return out
+    }
+
+    /** 设备内持久化的历史名字(只在手机里,不进仓库、不联网)。 */
+    private fun persistedNames(diagDir: File): MutableSet<String> {
+        val out = LinkedHashSet<String>()
+        val f = File(diagDir, "known_names.txt")
+        try {
+            if (f.isFile) {
+                for (line in f.readLines(Charsets.UTF_8)) {
+                    val n = line.trim()
+                    if (n.isNotEmpty() && n.length <= 64) out.add(n)
+                }
+            }
+        } catch (e: Exception) {
+            // 读不到就当空(不影响脱敏主流程)
+        }
+        return out
+    }
+
+    private fun savePersistedNames(diagDir: File, all: Collection<String>) {
+        try {
+            diagDir.mkdirs()
+            File(diagDir, "known_names.txt").writeText(all.take(4000).joinToString("\n"), Charsets.UTF_8)
+        } catch (e: Exception) {
+            // 写不进去也无妨
         }
     }
 
