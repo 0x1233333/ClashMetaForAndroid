@@ -8,7 +8,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -77,13 +76,18 @@ object AutoUploader {
         if (DiagExporter.sourcePayloadBytes(context) <= 0L) return Outcome.SkippedEmpty
         if (!busy.compareAndSet(false, true)) return Outcome.Busy
         try {
-            val zip = try {
-                buildUploadZip(context)
+            val packed = try {
+                DiagExporter.pack(context, redact = true)
             } catch (e: Exception) {
                 val reason = e.message?.take(180) ?: e.javaClass.simpleName
                 store.lastUploadError = reason
                 return Outcome.Failed(reason)
-            } ?: return Outcome.SkippedEmpty
+            }
+            val zip = packed.file
+            if (zip.length() <= 0L || zip.length() > MAX_ZIP_BYTES) {
+                zip.delete()
+                return Outcome.SkippedEmpty
+            }
 
             store.lastAttemptAt = now
             if (force || stallNow) store.lastStallAttemptAt = now
@@ -95,6 +99,7 @@ object AutoUploader {
                 store.lastUploadBytes = zip.length()
                 store.lastUploadError = ""
                 store.lastUploadRedacted = true
+                store.lastUploadItems = packed.items
                 store.lastStalledGeneration = RoutingSampler.stalledGeneration()
                 Outcome.Uploaded(zip.length())
             } else {
@@ -105,22 +110,6 @@ object AutoUploader {
         } finally {
             busy.set(false)
         }
-    }
-
-    private fun buildUploadZip(context: Context): File? {
-        val full = DiagExporter.buildBundle(context, redact = true, includeKernel = true)
-        if (full.length() <= 0L) {
-            full.delete()
-            return null
-        }
-        if (full.length() <= MAX_ZIP_BYTES) return full
-        full.delete()
-        val slim = DiagExporter.buildBundle(context, redact = true, includeKernel = false)
-        if (slim.length() <= 0L) {
-            slim.delete()
-            return null
-        }
-        return slim
     }
 
     private fun newStall(store: TelegramStore): Boolean {

@@ -43,8 +43,16 @@ class RoutingSampler private constructor(
         val proxies: Map<String, DiagJson.ProxyInfo>,
     )
 
-    private val routingStore = DiagStore(appContext, "routing.jsonl")
-    private val weightStore = DiagStore(appContext, "weights.jsonl")
+    private val routingStore = DiagStore(
+        appContext,
+        "routing.jsonl",
+        metaLine = DiagJson.ROUTING_META,
+    )
+    private val weightStore = DiagStore(
+        appContext,
+        "weights.jsonl",
+        metaLine = DiagJson.WEIGHTS_META,
+    )
     private val tracks = HashMap<String, Track>()
     private val trackLock = Any()
 

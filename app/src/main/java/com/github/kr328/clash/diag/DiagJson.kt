@@ -12,6 +12,14 @@ import java.util.TimeZone
  * 目标身份只以 SHA-1 前 6 位十六进制离开这里,原文不进记录。
  */
 internal object DiagJson {
+    /** 只放在 routing.jsonl 第一行。数据行不要带这份说明。 */
+    const val ROUTING_META =
+        """{"_meta":"routing samples, one JSON per line","interval_s":10,"fields":{"ts":"ISO8601 local time","conn_id":"connection id","node":"sha1-hashed node name (node-<6 hex>)","target_class":"sha1 of destination host, never plaintext","down_bytes":"cumulative bytes down","up_bytes":"cumulative bytes up","down_rate":"recent down bytes/s","up_rate":"recent up bytes/s","age_s":"connection age seconds","idle_s":"seconds since last byte growth","stalled":"idle_s > 5","net_type":"wifi|cellular","screen":"on|off","chosen_weight":"weight of the selected node","alts_top3":"top-3 candidate nodes by weight with their weight/last_delay_ms/alive"}}"""
+
+    /** 只放在 weights.jsonl 第一行。快照间隔与 RoutingSampler 的 5 分钟落盘一致。 */
+    const val WEIGHTS_META =
+        """{"_meta":"node weight snapshots","interval_s":300,"fields":{"ts":"ISO8601","groups":"map: group name -> array of {node, weight, delay, alive}"}}"""
+
     data class Conn(
         val id: String,
         val start: String,

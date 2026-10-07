@@ -3,6 +3,8 @@ package com.github.kr328.clash.diag
 import android.content.Context
 import android.os.Build
 import android.os.PowerManager
+import com.github.kr328.clash.design.R
+import com.github.kr328.clash.design.store.TelegramStore
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedOutputStream
@@ -20,12 +22,12 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 /**
- * 把 filesDir/diag 和最新一份内核日志打成 ZIP。
- * 文件必须落在 cacheDir/export/，FileProvider 才放行。
- * 分享复用 LogsActivity 现成逻辑；.zip 的 MIME 是 application/zip。
+ * 按 TelegramStore 的勾选项把原始文件打成 ZIP。
+ * 不写 HTML。文件落在 cacheDir/export/，FileProvider 才放行。
+ * 压缩包超过 8 MB 时先截内核日志尾部，再丢额外文件，最后才截 routing/weights 的旧行。
  */
 object DiagExporter {
-    private const val KERNEL_TAIL_BYTES = 2 * 1024 * 1024
+    private const val MAX_BUNDLE_BYTES = 8 * 1024 * 1024
     private const val CONTROLLER_VERSION = "http://127.0.0.1:9090/version"
     private const val HTTP_TIMEOUT_MS = 1500
     private val LOG_NAME = Regex("clash-(\\d+)\\.log")
@@ -38,18 +40,335 @@ object DiagExporter {
         "age_s", "idle_s", "stalled", "net_type", "screen",
         "chosen_weight", "alts_top3", "last_delay_ms",
         "android_version", "sdk", "model", "abi", "version_name",
-        "kernel_version", "root", "power_save",
+        "kernel_version", "root", "power_save", "schema",
+        "_meta", "interval_s", "fields",
     )
+    private val ITEM_ORDER = listOf("routing", "env", "kernel_log", "crashes", "extra")
 
-    private data class Part(val name: String, val bytes: ByteArray, val lines: Int)
+    data class Packed(val file: File, val items: String)
 
-    fun buildBundle(context: Context, redact: Boolean = true, includeKernel: Boolean = true): File {
+    private data class Part(val name: String, val bytes: ByteArray, val item: String)
+
+    fun buildBundle(context: Context, redact: Boolean = true): File {
+        return pack(context, redact).file
+    }
+
+    fun pack(context: Context, redact: Boolean = true): Packed {
         val app = context.applicationContext
-        val dir = File(app.cacheDir, "export")
+        val fitted = fitToLimit(app, collect(app, redact))
+        return Packed(fitted.second, itemCsv(fitted.first))
+    }
+
+    /** 纯文本：文件名、字节数、是否脱敏。不做 HTML。 */
+    fun previewText(context: Context, redact: Boolean = true): String {
+        val app = context.applicationContext
+        val fitted = fitToLimit(app, collect(app, redact))
+        fitted.second.delete()
+        val parts = fitted.first
+        if (parts.isEmpty()) return app.getString(R.string.preview_upload_empty) + "\n"
+        val state = if (redact) {
+            app.getString(R.string.redacted_yes)
+        } else {
+            app.getString(R.string.redacted_no)
+        }
+        val sb = StringBuilder()
+        for (part in parts) {
+            sb.append(part.name)
+            sb.append('\t')
+            sb.append(part.bytes.size)
+            sb.append(" B\t")
+            sb.append(state)
+            sb.append('\n')
+        }
+        return sb.toString()
+    }
+
+    /**
+     * 只改 `"node"` 字符串：换成 `node-` + 该名字 SHA-1 的前 6 位十六进制。
+     * 第一行 `_meta` 是字段说明，原样保留。
+     */
+    fun redact(jsonl: String): String {
+        if (jsonl.isEmpty() || !jsonl.contains("\"node\"")) return jsonl
+        return preservingMeta(jsonl) { body ->
+            NODE_FIELD.replace(body) { match ->
+                val name = unescapeJson(match.groupValues[1])
+                "\"node\":\"${nodeToken(name)}\""
+            }
+        }
+    }
+
+    fun sourcePayloadBytes(context: Context): Long {
+        val app = context.applicationContext
+        val store = TelegramStore(app)
+        val diagDir = File(app.filesDir, "diag")
+        var total = 0L
+        if (store.selRouting) {
+            for (name in arrayOf("routing.jsonl", "weights.jsonl")) {
+                val file = File(diagDir, name)
+                if (file.isFile) total += file.length()
+            }
+        }
+        if (store.selCrashes) {
+            val file = File(diagDir, "crashes.jsonl")
+            if (file.isFile) total += file.length()
+        }
+        if (store.selExtra) {
+            val files = File(diagDir, "extra").listFiles() ?: emptyArray()
+            for (file in files) {
+                if (file.isFile) total += file.length()
+            }
+        }
+        if (store.selKernelLog) {
+            val kernel = findLatestKernel(app)
+            if (kernel != null && kernel.isFile) total += kernel.length()
+        }
+        // env.json 打包时现生成，磁盘上没有对应文件。
+        if (store.selEnv) total += 1L
+        return total
+    }
+
+    private fun collect(context: Context, redact: Boolean): List<Part> {
+        val store = TelegramStore(context)
+        val diagDir = File(context.filesDir, "diag")
+        val routingRaw = if (store.selRouting) readWhole(File(diagDir, "routing.jsonl")) else null
+        val weightsRaw = if (store.selRouting) readWhole(File(diagDir, "weights.jsonl")) else null
+        val crashesRaw = if (store.selCrashes) readFile(File(diagDir, "crashes.jsonl")) else null
+        val extras = if (store.selExtra) readExtra(File(diagDir, "extra")) else emptyList()
+        val kernelRaw = if (store.selKernelLog) readLatestKernel(context) else null
+
+        val nodeNames = LinkedHashSet<String>()
+        if (redact) {
+            for (raw in listOfNotNull(routingRaw, weightsRaw, crashesRaw)) {
+                nodeNames.addAll(collectNodeNames(String(raw, Charsets.UTF_8)))
+            }
+            for ((_, raw) in extras) {
+                if (looksText(raw)) nodeNames.addAll(collectNodeNames(String(raw, Charsets.UTF_8)))
+            }
+        }
+
+        val parts = ArrayList<Part>()
+        if (routingRaw != null) {
+            parts.add(
+                Part(
+                    "routing.jsonl",
+                    prepareJsonl(routingRaw, DiagJson.ROUTING_META, redact, nodeNames),
+                    "routing",
+                )
+            )
+        }
+        if (weightsRaw != null) {
+            parts.add(
+                Part(
+                    "weights.jsonl",
+                    prepareJsonl(weightsRaw, DiagJson.WEIGHTS_META, redact, nodeNames),
+                    "routing",
+                )
+            )
+        }
+        if (store.selEnv) {
+            var env = buildEnv(context)
+            if (redact && nodeNames.isNotEmpty()) env = scrubNames(env, nodeNames)
+            val bytes = env.toByteArray(Charsets.UTF_8)
+            if (bytes.isNotEmpty()) parts.add(Part("env.json", bytes, "env"))
+        }
+        if (crashesRaw != null) {
+            val bytes = prepareLoose("crashes.jsonl", crashesRaw, redact, nodeNames)
+            if (bytes.isNotEmpty()) parts.add(Part("crashes.jsonl", bytes, "crashes"))
+        }
+        val seen = HashSet<String>()
+        for ((name, raw) in extras) {
+            if (!seen.add(name)) continue
+            val bytes = prepareLoose(name, raw, redact, nodeNames)
+            if (bytes.isNotEmpty()) parts.add(Part(name, bytes, "extra"))
+        }
+        if (kernelRaw != null && kernelRaw.isNotEmpty()) {
+            val bytes = if (redact && nodeNames.isNotEmpty()) {
+                replaceNames(String(kernelRaw, Charsets.UTF_8), nodeNames).toByteArray(Charsets.UTF_8)
+            } else {
+                kernelRaw
+            }
+            if (bytes.isNotEmpty()) parts.add(Part("kernel.log", bytes, "kernel_log"))
+        }
+        return parts
+    }
+
+    /**
+     * 反复打包试大小。超限时优先把 kernel.log 留尾部，routing/weights 最后才丢旧行。
+     * 返回的文件已经落在 export/，调用方负责在不要它时删除。
+     */
+    private fun fitToLimit(context: Context, parts: List<Part>): Pair<List<Part>, File> {
+        var current = parts.filter { it.bytes.isNotEmpty() }
+        var file = writeZip(context, current)
+        var guard = 0
+        while (file.length() > MAX_BUNDLE_BYTES && current.isNotEmpty() && guard < 24) {
+            file.delete()
+            guard++
+            val next = shrinkForCap(current)
+            val nextBytes = next.sumOf { it.bytes.size }
+            current = if (nextBytes >= current.sumOf { it.bytes.size }) {
+                current.dropLast(1)
+            } else {
+                next
+            }
+            file = writeZip(context, current)
+        }
+        if (file.length() > MAX_BUNDLE_BYTES) {
+            file.delete()
+            current = current.mapNotNull { part ->
+                when (part.item) {
+                    "routing" -> {
+                        val tailed = tailJsonl(part.bytes, 2 * 1024 * 1024)
+                        if (tailed.isEmpty()) null else part.copy(bytes = tailed)
+                    }
+                    "env" -> part
+                    else -> null
+                }
+            }
+            file = writeZip(context, current)
+        }
+        return current to file
+    }
+
+    private fun shrinkForCap(parts: List<Part>): List<Part> {
+        val kernelIdx = parts.indexOfLast { it.item == "kernel_log" }
+        if (kernelIdx >= 0) {
+            val part = parts[kernelIdx]
+            val halved = tailBytes(part.bytes, part.bytes.size / 2)
+            if (halved.isNotEmpty() && halved.size < part.bytes.size) {
+                val copy = parts.toMutableList()
+                copy[kernelIdx] = part.copy(bytes = halved)
+                return copy
+            }
+            return parts.filter { it.item != "kernel_log" }
+        }
+        if (parts.any { it.item == "extra" }) return parts.filter { it.item != "extra" }
+        if (parts.any { it.item == "crashes" }) return parts.filter { it.item != "crashes" }
+        val big = parts.indices
+            .filter { parts[it].name == "routing.jsonl" || parts[it].name == "weights.jsonl" }
+            .maxByOrNull { parts[it].bytes.size }
+        if (big != null && parts[big].bytes.size > 2048) {
+            val part = parts[big]
+            val tailed = tailJsonl(part.bytes, part.bytes.size / 2)
+            if (tailed.isNotEmpty() && tailed.size < part.bytes.size) {
+                val copy = parts.toMutableList()
+                copy[big] = part.copy(bytes = tailed)
+                return copy
+            }
+        }
+        val envIdx = parts.indexOfFirst { it.item == "env" }
+        if (envIdx >= 0 && parts.size > 1) {
+            return parts.filterIndexed { index, _ -> index != envIdx }
+        }
+        return if (parts.size <= 1) emptyList() else parts.dropLast(1)
+    }
+
+    private fun itemCsv(parts: List<Part>): String {
+        val present = parts.map { it.item }.toSet()
+        return ITEM_ORDER.filter { it in present }.joinToString(",")
+    }
+
+    private fun readWhole(file: File): ByteArray? {
+        if (!file.isFile || file.length() <= 0L) return null
+        val raw = file.readBytes()
+        return if (raw.isEmpty()) null else raw
+    }
+
+    private fun readFile(file: File): ByteArray? {
+        if (!file.isFile || file.length() <= 0L) return null
+        val raw = if (file.length() <= MAX_BUNDLE_BYTES) file.readBytes() else readTail(file, MAX_BUNDLE_BYTES)
+        return if (raw.isEmpty()) null else raw
+    }
+
+    private fun readExtra(dir: File): List<Pair<String, ByteArray>> {
+        val files = dir.listFiles() ?: return emptyList()
+        val out = ArrayList<Pair<String, ByteArray>>()
+        for (file in files.sortedBy { it.name }) {
+            val entry = extraEntryName(file) ?: continue
+            val raw = readFile(file) ?: continue
+            out.add(entry to raw)
+        }
+        return out
+    }
+
+    private fun extraEntryName(file: File): String? {
+        if (!file.isFile) return null
+        val name = file.name
+        if (name.isEmpty() || name == "." || name == "..") return null
+        if (name.indexOf('/') >= 0 || name.indexOf('\\') >= 0) return null
+        return "extra/$name"
+    }
+
+    private fun prepareJsonl(
+        raw: ByteArray,
+        meta: String,
+        redact: Boolean,
+        nodeNames: Set<String>,
+    ): ByteArray {
+        var text = String(raw, Charsets.UTF_8)
+        if (redact) {
+            text = redact(text)
+            if (nodeNames.isNotEmpty()) text = scrubNames(text, nodeNames)
+        }
+        text = ensureMeta(text, meta)
+        return text.toByteArray(Charsets.UTF_8)
+    }
+
+    private fun prepareLoose(
+        name: String,
+        raw: ByteArray,
+        redact: Boolean,
+        nodeNames: Set<String>,
+    ): ByteArray {
+        if (!redact || raw.isEmpty() || !looksText(raw)) return raw
+        val text = String(raw, Charsets.UTF_8)
+        val jsonish = name.endsWith(".json") || name.endsWith(".jsonl") ||
+            text.trimStart().startsWith("{") || text.trimStart().startsWith("[")
+        val out = if (jsonish) {
+            val redacted = redact(text)
+            if (nodeNames.isEmpty()) redacted else scrubNames(redacted, nodeNames)
+        } else if (nodeNames.isEmpty()) {
+            text
+        } else {
+            replaceNames(text, nodeNames)
+        }
+        return out.toByteArray(Charsets.UTF_8)
+    }
+
+    private fun ensureMeta(text: String, metaLine: String): String {
+        val line = if (metaLine.endsWith("\n")) metaLine else metaLine + "\n"
+        if (text.isEmpty()) return line
+        val nl = text.indexOf('\n')
+        val first = if (nl < 0) text else text.substring(0, nl)
+        if (first.contains("\"_meta\"")) {
+            return if (text.endsWith("\n")) text else text + "\n"
+        }
+        return line + text
+    }
+
+    /** 第一行是 `_meta` 时不改它，只处理后面的数据。 */
+    private fun preservingMeta(text: String, transform: (String) -> String): String {
+        val nl = text.indexOf('\n')
+        if (nl <= 0) {
+            return if (text.contains("\"_meta\"")) text else transform(text)
+        }
+        val first = text.substring(0, nl)
+        if (!first.contains("\"_meta\"")) return transform(text)
+        return first + "\n" + transform(text.substring(nl + 1))
+    }
+
+    private fun looksText(bytes: ByteArray): Boolean {
+        val n = minOf(bytes.size, 8192)
+        for (i in 0 until n) {
+            if (bytes[i] == 0.toByte()) return false
+        }
+        return true
+    }
+
+    private fun writeZip(context: Context, parts: List<Part>): File {
+        val dir = File(context.cacheDir, "export")
         if (!dir.isDirectory && !dir.mkdirs() && !dir.isDirectory) {
             throw IOException("mkdir ${dir.absolutePath} failed")
         }
-        val parts = assemble(app, redact, includeKernel)
         val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
         var out = File(dir, "clash-smart-diag-$stamp.zip")
         if (out.exists()) {
@@ -78,118 +397,13 @@ object DiagExporter {
         }
     }
 
-    /**
-     * 只改 `"node"` 字符串：换成 `node-` + 该名字 SHA-1 的前 6 位十六进制。
-     * alts_top3 / weights 里的 node 是同一个字段，一并处理。其余原样保留。
-     */
-    fun redact(jsonl: String): String {
-        if (jsonl.isEmpty() || !jsonl.contains("\"node\"")) return jsonl
-        return NODE_FIELD.replace(jsonl) { match ->
-            val name = unescapeJson(match.groupValues[1])
-            "\"node\":\"${nodeToken(name)}\""
-        }
-    }
-
-    fun previewText(context: Context, redact: Boolean = true): String {
-        val parts = assemble(context.applicationContext, redact, includeKernel = true)
-        val sb = StringBuilder()
-        for (part in parts) {
-            sb.append(part.name)
-            sb.append(" size=")
-            sb.append(part.bytes.size)
-            sb.append(" lines=")
-            sb.append(part.lines)
-            sb.append('\n')
-        }
-        sb.append("\nenv.json:\n")
-        val env = parts.firstOrNull { it.name == "env.json" }
-        if (env == null) {
-            sb.append("(缺失)\n")
-        } else {
-            sb.append(String(env.bytes, Charsets.UTF_8))
-            if (env.bytes.isEmpty() || env.bytes.last() != '\n'.code.toByte()) sb.append('\n')
-        }
-        sb.append("\nrouting (first 5):\n")
-        val routing = parts.firstOrNull { it.name == "routing.jsonl" }
-        if (routing == null) {
-            sb.append("(缺失)\n")
-        } else {
-            var shown = 0
-            for (line in String(routing.bytes, Charsets.UTF_8).lineSequence()) {
-                if (line.isEmpty()) continue
-                sb.append(line)
-                sb.append('\n')
-                shown++
-                if (shown == 5) break
-            }
-            if (shown == 0) sb.append("(空)\n")
-        }
-        return sb.toString()
-    }
-
-    fun sourcePayloadBytes(context: Context): Long {
-        val diagDir = File(context.applicationContext.filesDir, "diag")
-        var total = 0L
-        for (name in listOf("routing.jsonl", "weights.jsonl")) {
-            val file = File(diagDir, name)
-            if (file.isFile) total += file.length()
-        }
-        return total
-    }
-
-    private fun assemble(context: Context, redact: Boolean, includeKernel: Boolean): List<Part> {
-        val diagDir = File(context.filesDir, "diag")
-        val names = if (includeKernel) {
-            listOf("routing.jsonl", "weights.jsonl", "crashes.jsonl", "events.jsonl")
-        } else {
-            listOf("routing.jsonl", "weights.jsonl")
-        }
-        val raws = LinkedHashMap<String, ByteArray>()
-        val nodeNames = LinkedHashSet<String>()
-        for (name in names) {
-            val file = File(diagDir, name)
-            if (!file.isFile || file.length() <= 0L) continue
-            val raw = file.readBytes()
-            if (raw.isEmpty()) continue
-            raws[name] = raw
-            if (redact) nodeNames.addAll(collectNodeNames(String(raw, Charsets.UTF_8)))
-        }
-        val parts = ArrayList<Part>()
-        for ((name, raw) in raws) {
-            val bytes = if (redact) {
-                var text = redact(String(raw, Charsets.UTF_8))
-                if (nodeNames.isNotEmpty()) text = scrubNames(text, nodeNames)
-                text.toByteArray(Charsets.UTF_8)
-            } else {
-                raw
-            }
-            if (bytes.isEmpty()) continue
-            parts.add(Part(name, bytes, countLines(bytes)))
-        }
-        if (includeKernel) {
-            val kernel = readLatestKernel(context)
-            if (kernel != null && kernel.isNotEmpty()) {
-                val bytes = if (redact && nodeNames.isNotEmpty()) {
-                    replaceNames(String(kernel, Charsets.UTF_8), nodeNames).toByteArray(Charsets.UTF_8)
-                } else {
-                    kernel
-                }
-                if (bytes.isNotEmpty()) parts.add(Part("kernel.log", bytes, countLines(bytes)))
-            }
-        }
-        var envText = buildEnv(context)
-        if (redact && nodeNames.isNotEmpty()) envText = scrubNames(envText, nodeNames)
-        val env = envText.toByteArray(Charsets.UTF_8)
-        parts.add(Part("env.json", env, countLines(env)))
-        val routing = parts.firstOrNull { it.name == "routing.jsonl" }?.let {
-            String(it.bytes, Charsets.UTF_8)
-        }
-        val summary = buildSummary(parts, routing, String(env, Charsets.UTF_8))
-        parts.add(Part("summary.html", summary, countLines(summary)))
-        return parts
-    }
-
     private fun readLatestKernel(context: Context): ByteArray? {
+        val chosen = findLatestKernel(context) ?: return null
+        val bytes = readTail(chosen, MAX_BUNDLE_BYTES)
+        return if (bytes.isEmpty()) null else bytes
+    }
+
+    private fun findLatestKernel(context: Context): File? {
         val dir = File(context.cacheDir, "logs")
         val files = dir.listFiles() ?: return null
         var best: File? = null
@@ -210,8 +424,7 @@ object DiagExporter {
                 best = file
             }
         }
-        val chosen = best ?: fallback ?: return null
-        return readTail(chosen, KERNEL_TAIL_BYTES)
+        return best ?: fallback
     }
 
     private fun readTail(file: File, maxBytes: Int): ByteArray {
@@ -231,6 +444,66 @@ object DiagExporter {
         }
     }
 
+    /** 保留第一行 `_meta`，其余只留尾部的完整行。 */
+    private fun tailJsonl(bytes: ByteArray, maxBytes: Int): ByteArray {
+        if (maxBytes <= 0 || bytes.isEmpty()) return ByteArray(0)
+        if (bytes.size <= maxBytes) return bytes
+        val nl = indexOfByte(bytes, '\n'.code.toByte(), 0)
+        val metaEnd = if (nl >= 0 && lineHasMeta(bytes, 0, nl) && nl + 1 <= maxBytes) nl + 1 else 0
+        val room = maxBytes - metaEnd
+        if (room <= 0) return if (metaEnd > 0) bytes.copyOfRange(0, metaEnd) else ByteArray(0)
+        val body = if (metaEnd >= bytes.size) {
+            ByteArray(0)
+        } else {
+            tailBytes(bytes.copyOfRange(metaEnd, bytes.size), room)
+        }
+        if (metaEnd == 0) return body
+        if (body.isEmpty()) return bytes.copyOfRange(0, metaEnd)
+        val out = ByteArray(metaEnd + body.size)
+        System.arraycopy(bytes, 0, out, 0, metaEnd)
+        System.arraycopy(body, 0, out, metaEnd, body.size)
+        return out
+    }
+
+    private fun tailBytes(bytes: ByteArray, maxBytes: Int): ByteArray {
+        if (maxBytes <= 0 || bytes.isEmpty()) return ByteArray(0)
+        if (bytes.size <= maxBytes) return bytes
+        var start = bytes.size - maxBytes
+        val limit = minOf(bytes.size - 1, start + 8192)
+        var i = start
+        while (i < limit && bytes[i] != '\n'.code.toByte()) i++
+        if (i < bytes.size && bytes[i] == '\n'.code.toByte() && i + 1 < bytes.size) {
+            start = i + 1
+        }
+        if (start >= bytes.size) return ByteArray(0)
+        return bytes.copyOfRange(start, bytes.size)
+    }
+
+    private fun lineHasMeta(bytes: ByteArray, start: Int, end: Int): Boolean {
+        val token = "\"_meta\"".toByteArray(Charsets.UTF_8)
+        val last = end - token.size
+        var i = start
+        while (i <= last) {
+            var ok = true
+            for (j in token.indices) {
+                if (bytes[i + j] != token[j]) {
+                    ok = false
+                    break
+                }
+            }
+            if (ok) return true
+            i++
+        }
+        return false
+    }
+
+    private fun indexOfByte(bytes: ByteArray, target: Byte, from: Int): Int {
+        for (i in from until bytes.size) {
+            if (bytes[i] == target) return i
+        }
+        return -1
+    }
+
     private fun buildEnv(context: Context): String {
         val obj = JSONObject()
         obj.put("android_version", Build.VERSION.RELEASE)
@@ -243,6 +516,17 @@ object DiagExporter {
         obj.put("kernel_version", kernelVersion() ?: JSONObject.NULL)
         obj.put("root", suExists())
         obj.put("power_save", powerSave(context))
+        val schema = JSONObject()
+        schema.put("android_version", "Android release name")
+        schema.put("sdk", "Android SDK int")
+        schema.put("model", "device model")
+        schema.put("abi", "supported CPU ABIs")
+        schema.put("version_name", "this app versionName, or null")
+        schema.put("kernel_version", "core version string, or null when the local controller is down")
+        schema.put("root", "true when an su binary is visible")
+        schema.put("power_save", "true when system power-save mode is on")
+        schema.put("schema", "this object: one line of meaning for each key")
+        obj.put("schema", schema)
         return obj.toString(2) + "\n"
     }
 
@@ -317,190 +601,35 @@ object DiagExporter {
         }
     }
 
-    private fun buildSummary(parts: List<Part>, routing: String?, envJson: String): ByteArray {
-        val stalled = countStalled(routing, 10)
-        val dist = targetClassDist(routing, 5)
-        val template = StringBuilder()
-        template.append(
-            """
-            <!DOCTYPE html>
-            <html lang="zh-CN">
-            <head>
-            <meta charset="utf-8">
-            <title>诊断包摘要</title>
-            <style>
-            body{font-family:sans-serif;margin:16px;color:#222;background:#fff}
-            h1{font-size:20px}
-            h2{font-size:16px;margin-top:20px}
-            table{border-collapse:collapse;width:100%;max-width:720px}
-            th,td{border:1px solid #ccc;padding:4px 8px;text-align:left;vertical-align:top}
-            th{background:#f4f4f4}
-            code{font-family:monospace}
-            </style>
-            </head>
-            <body>
-            <h1>诊断包摘要</h1>
-            <h2>文件清单</h2>
-            <table>
-            <thead><tr><th>文件</th><th>大小（字节）</th><th>行数</th></tr></thead>
-            <tbody>
-            """.trimIndent(),
-        )
-        template.append('\n')
-        for (part in parts) {
-            template.append("<tr><td><code>")
-            template.append(esc(part.name))
-            template.append("</code></td><td>")
-            template.append(part.bytes.size)
-            template.append("</td><td>")
-            template.append(part.lines)
-            template.append("</td></tr>\n")
-        }
-        template.append("<tr><td><code>summary.html</code></td><td>__SUMMARY_BYTES__</td><td>__SUMMARY_LINES__</td></tr>\n")
-        template.append("</tbody></table>\n")
-        template.append("<h2>连接</h2>\n<p>最近 10 条连接记录里 stalled=true 的条数：")
-        template.append(stalled)
-        template.append("</p>\n")
-        template.append("<h2>target_class 分布（最近 5 条）</h2>\n")
-        if (dist.isEmpty()) {
-            template.append("<p>无连接记录</p>\n")
-        } else {
-            template.append("<table><thead><tr><th>target_class</th><th>条数</th></tr></thead><tbody>\n")
-            for ((key, count) in dist) {
-                template.append("<tr><td><code>")
-                template.append(esc(key))
-                template.append("</code></td><td>")
-                template.append(count)
-                template.append("</td></tr>\n")
-            }
-            template.append("</tbody></table>\n")
-        }
-        template.append("<h2>环境信息</h2>\n<table><tbody>\n")
-        appendEnvRows(template, envJson)
-        template.append("</tbody></table>\n</body>\n</html>\n")
-        return renderSummary(template.toString())
-    }
-
-    private fun renderSummary(template: String): ByteArray {
-        var size = 0
-        var lines = countLines(template.toByteArray(Charsets.UTF_8))
-        var rendered = ByteArray(0)
-        repeat(8) {
-            rendered = template
-                .replace("__SUMMARY_BYTES__", size.toString())
-                .replace("__SUMMARY_LINES__", lines.toString())
-                .toByteArray(Charsets.UTF_8)
-            val nextLines = countLines(rendered)
-            if (rendered.size == size && nextLines == lines) return rendered
-            size = rendered.size
-            lines = nextLines
-        }
-        return rendered
-    }
-
-    private fun appendEnvRows(body: StringBuilder, envJson: String) {
-        val obj = try {
-            JSONObject(envJson)
-        } catch (e: Exception) {
-            body.append("<tr><td>env.json</td><td><pre>")
-            body.append(esc(envJson))
-            body.append("</pre></td></tr>\n")
-            return
-        }
-        val labels = listOf(
-            "android_version" to "Android 版本",
-            "sdk" to "SDK",
-            "model" to "机型",
-            "abi" to "ABI",
-            "version_name" to "应用版本",
-            "kernel_version" to "内核版本",
-            "root" to "Root",
-            "power_save" to "省电模式",
-        )
-        for ((key, label) in labels) {
-            body.append("<tr><td>")
-            body.append(esc(label))
-            body.append("</td><td>")
-            body.append(esc(formatEnv(obj, key)))
-            body.append("</td></tr>\n")
-        }
-    }
-
-    private fun formatEnv(obj: JSONObject, key: String): String {
-        if (!obj.has(key) || obj.isNull(key)) return "null"
-        return when (val value = obj.opt(key)) {
-            is JSONArray -> {
-                val items = ArrayList<String>(value.length())
-                for (i in 0 until value.length()) items.add(value.optString(i))
-                items.joinToString(", ")
-            }
-            is Boolean -> if (value) "是" else "否"
-            else -> value.toString()
-        }
-    }
-
-    private fun countStalled(routing: String?, n: Int): Int {
-        var count = 0
-        for (line in lastLines(routing, n)) {
-            val obj = try {
-                JSONObject(line)
-            } catch (e: Exception) {
-                continue
-            }
-            if (obj.optBoolean("stalled", false)) count++
-        }
-        return count
-    }
-
-    private fun targetClassDist(routing: String?, n: Int): List<Pair<String, Int>> {
-        val map = LinkedHashMap<String, Int>()
-        for (line in lastLines(routing, n)) {
-            val obj = try {
-                JSONObject(line)
-            } catch (e: Exception) {
-                continue
-            }
-            val key = if (!obj.has("target_class") || obj.isNull("target_class")) {
-                "(缺失)"
-            } else {
-                obj.optString("target_class", "(缺失)").ifEmpty { "(缺失)" }
-            }
-            map[key] = (map[key] ?: 0) + 1
-        }
-        return map.entries.sortedByDescending { it.value }.map { it.key to it.value }
-    }
-
-    private fun lastLines(text: String?, n: Int): List<String> {
-        if (text.isNullOrEmpty() || n <= 0) return emptyList()
-        val out = ArrayDeque<String>(n)
-        var end = text.length
-        if (text[end - 1] == '\n') end--
-        while (end > 0 && out.size < n) {
-            val breakAt = text.lastIndexOf('\n', end - 1)
-            val start = if (breakAt < 0) 0 else breakAt + 1
-            val line = text.substring(start, end)
-            if (line.isNotEmpty()) out.addFirst(line)
-            if (start == 0) break
-            end = start - 1
-        }
-        return out
-    }
-
     private fun collectNodeNames(jsonl: String): Set<String> {
         if (!jsonl.contains("\"node\"")) return emptySet()
+        val body = dropMetaLine(jsonl)
+        if (!body.contains("\"node\"")) return emptySet()
         val names = LinkedHashSet<String>()
-        for (match in NODE_FIELD.findAll(jsonl)) {
+        for (match in NODE_FIELD.findAll(body)) {
             val name = unescapeJson(match.groupValues[1])
             if (name.isNotEmpty()) names.add(name)
         }
         return names
     }
 
+    private fun dropMetaLine(text: String): String {
+        val nl = text.indexOf('\n')
+        if (nl <= 0) return if (text.contains("\"_meta\"")) "" else text
+        val first = text.substring(0, nl)
+        return if (first.contains("\"_meta\"")) text.substring(nl + 1) else text
+    }
+
     /**
      * 节点名若还出现在其它 JSON 字符串里（例如权重分组名），也换成同一个 token。
-     * 结构字段名（node/weight/...）本身不改。
+     * 结构字段名（node/weight/...）本身不改。`_meta` 行不改。
      */
     private fun scrubNames(jsonl: String, names: Set<String>): String {
+        if (jsonl.isEmpty() || names.isEmpty()) return jsonl
+        return preservingMeta(jsonl) { body -> scrubBody(body, names) }
+    }
+
+    private fun scrubBody(jsonl: String, names: Set<String>): String {
         if (jsonl.isEmpty() || names.isEmpty()) return jsonl
         return JSON_STRING.replace(jsonl) { match ->
             val decoded = unescapeJson(match.groupValues[1])
@@ -608,22 +737,5 @@ object DiagExporter {
             }
         }
         return out.toString()
-    }
-
-    private fun countLines(bytes: ByteArray): Int {
-        if (bytes.isEmpty()) return 0
-        var n = 0
-        for (b in bytes) {
-            if (b == '\n'.code.toByte()) n++
-        }
-        if (bytes.last() != '\n'.code.toByte()) n++
-        return n
-    }
-
-    private fun esc(s: String): String {
-        return s.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace("\"", "&quot;")
     }
 }

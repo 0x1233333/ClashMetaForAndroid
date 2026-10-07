@@ -9,6 +9,8 @@ import com.github.kr328.clash.design.model.Behavior
 import com.github.kr328.clash.design.store.UiStore.Companion.mainActivityAlias
 import com.github.kr328.clash.design.ui.ToastDuration
 import com.github.kr328.clash.diag.AutoUploader
+import com.github.kr328.clash.diag.DiagExporter
+import com.github.kr328.clash.diag.KernelCapture
 import com.github.kr328.clash.service.store.ServiceStore
 import com.github.kr328.clash.util.ApplicationObserver
 import kotlinx.coroutines.CancellationException
@@ -44,6 +46,24 @@ class AppSettingsActivity : BaseActivity<AppSettingsDesign>(), Behavior {
                         AppSettingsDesign.Request.ReCreateAllActivities -> {
                             ApplicationObserver.createdActivities.forEach { activity ->
                                 activity.recreate()
+                            }
+                        }
+                        AppSettingsDesign.Request.StartKernelLog -> {
+                            KernelCapture.startIfEnabled(this@AppSettingsActivity)
+                        }
+                        AppSettingsDesign.Request.PreviewUpload -> {
+                            val text = try {
+                                withContext(Dispatchers.IO) {
+                                    DiagExporter.previewText(this@AppSettingsActivity, redact = true)
+                                }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                design.showToast(R.string.share_failed, ToastDuration.Long)
+                                null
+                            }
+                            if (text != null) {
+                                design.showTextPage(R.string.preview_upload, text)
                             }
                         }
                         AppSettingsDesign.Request.UploadNow -> {

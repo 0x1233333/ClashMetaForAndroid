@@ -64,9 +64,9 @@ class LogsActivity : BaseActivity<LogsDesign>() {
                             shareFile(design, it.file)
                         }
                         LogsDesign.Request.ExportDiag -> {
-                            val zip = try {
+                            val packed = try {
                                 withContext(Dispatchers.IO) {
-                                    DiagExporter.buildBundle(this@LogsActivity, redact = true)
+                                    DiagExporter.pack(this@LogsActivity, redact = true)
                                 }
                             } catch (e: CancellationException) {
                                 throw e
@@ -74,17 +74,17 @@ class LogsActivity : BaseActivity<LogsDesign>() {
                                 design.showToast(R.string.share_failed, ToastDuration.Long)
                                 null
                             }
-                            if (zip != null) {
+                            if (packed != null) {
                                 when (design.requestExportChoice()) {
-                                    LogsDesign.ExportChoice.Share -> shareFile(design, zip)
+                                    LogsDesign.ExportChoice.Share -> shareFile(design, packed.file)
                                     LogsDesign.ExportChoice.Telegram -> {
                                         try {
-                                            uploadToTelegram(design, zip)
+                                            uploadToTelegram(design, packed.file, packed.items)
                                         } catch (e: CancellationException) {
                                             throw e
                                         } catch (e: Exception) {
                                             design.showToast(R.string.tg_upload_failed, ToastDuration.Long)
-                                            shareFile(design, zip)
+                                            shareFile(design, packed.file)
                                         }
                                     }
                                     null -> Unit
@@ -96,9 +96,9 @@ class LogsActivity : BaseActivity<LogsDesign>() {
                             if (store.botToken.trim().isEmpty() || store.chatId.trim().isEmpty()) {
                                 design.showToast(R.string.tg_not_configured, ToastDuration.Long)
                             } else {
-                                val zip = try {
+                                val packed = try {
                                     withContext(Dispatchers.IO) {
-                                        DiagExporter.buildBundle(this@LogsActivity, redact = true)
+                                        DiagExporter.pack(this@LogsActivity, redact = true)
                                     }
                                 } catch (e: CancellationException) {
                                     throw e
@@ -106,14 +106,14 @@ class LogsActivity : BaseActivity<LogsDesign>() {
                                     design.showToast(R.string.share_failed, ToastDuration.Long)
                                     null
                                 }
-                                if (zip != null) {
+                                if (packed != null) {
                                     try {
-                                        uploadToTelegram(design, zip)
+                                        uploadToTelegram(design, packed.file, packed.items)
                                     } catch (e: CancellationException) {
                                         throw e
                                     } catch (e: Exception) {
                                         design.showToast(R.string.tg_upload_failed, ToastDuration.Long)
-                                        shareFile(design, zip)
+                                        shareFile(design, packed.file)
                                     }
                                 }
                             }
@@ -124,7 +124,7 @@ class LogsActivity : BaseActivity<LogsDesign>() {
         }
     }
 
-    private suspend fun uploadToTelegram(design: LogsDesign, zip: File) {
+    private suspend fun uploadToTelegram(design: LogsDesign, zip: File, items: String) {
         val store = TelegramStore(this)
         val token = store.botToken.trim()
         val chatId = store.chatId.trim()
@@ -144,6 +144,11 @@ class LogsActivity : BaseActivity<LogsDesign>() {
         }
         val upload = result ?: Result.failure(IllegalStateException("upload"))
         if (upload.isSuccess) {
+            store.lastUploadAt = System.currentTimeMillis()
+            store.lastUploadBytes = zip.length()
+            store.lastUploadError = ""
+            store.lastUploadRedacted = true
+            store.lastUploadItems = items
             design.showToast(R.string.tg_upload_ok, ToastDuration.Short)
         } else {
             val reason = upload.exceptionOrNull()?.message?.take(180) ?: "error"

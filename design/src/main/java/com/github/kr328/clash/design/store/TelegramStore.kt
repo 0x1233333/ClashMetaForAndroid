@@ -42,6 +42,31 @@ class TelegramStore(context: Context) {
         defaultValue = false,
     )
 
+    var selRouting: Boolean by store.boolean(
+        key = "sel_routing",
+        defaultValue = true,
+    )
+
+    var selEnv: Boolean by store.boolean(
+        key = "sel_env",
+        defaultValue = true,
+    )
+
+    var selKernelLog: Boolean by store.boolean(
+        key = "sel_kernel_log",
+        defaultValue = false,
+    )
+
+    var selCrashes: Boolean by store.boolean(
+        key = "sel_crashes",
+        defaultValue = false,
+    )
+
+    var selExtra: Boolean by store.boolean(
+        key = "sel_extra",
+        defaultValue = false,
+    )
+
     var lastUploadAt: Long by store.long(
         key = "last_upload_at",
         defaultValue = 0L,
@@ -60,6 +85,12 @@ class TelegramStore(context: Context) {
     var lastUploadRedacted: Boolean by store.boolean(
         key = "last_upload_redacted",
         defaultValue = true,
+    )
+
+    /** 逗号分隔:routing,env,kernel_log,crashes,extra。空表示还没记过。 */
+    var lastUploadItems: String by store.string(
+        key = "last_upload_items",
+        defaultValue = "",
     )
 
     var lastAttemptAt: Long by store.long(

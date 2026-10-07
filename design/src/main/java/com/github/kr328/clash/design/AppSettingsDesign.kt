@@ -13,11 +13,15 @@ import com.github.kr328.clash.design.util.bindAppBarElevation
 import com.github.kr328.clash.design.util.layoutInflater
 import com.github.kr328.clash.design.util.root
 import com.github.kr328.clash.service.store.ServiceStore
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.coroutines.resume
 
 class AppSettingsDesign(
     context: Context,
@@ -30,6 +34,25 @@ class AppSettingsDesign(
     enum class Request {
         ReCreateAllActivities,
         UploadNow,
+        PreviewUpload,
+        StartKernelLog,
+    }
+
+    suspend fun showTextPage(titleRes: Int, message: CharSequence) {
+        withContext(Dispatchers.Main) {
+            suspendCancellableCoroutine { ctx ->
+                val dialog = MaterialAlertDialogBuilder(context)
+                    .setTitle(titleRes)
+                    .setMessage(message)
+                    .setPositiveButton(R.string.ok) { _, _ -> }
+                    .create()
+                dialog.setOnDismissListener {
+                    if (ctx.isActive) ctx.resume(Unit)
+                }
+                ctx.invokeOnCancellation { dialog.dismiss() }
+                dialog.show()
+            }
+        }
     }
 
     private val binding = DesignSettingsCommonBinding
@@ -153,6 +176,73 @@ class AppSettingsDesign(
                 empty = R.string.not_set,
             )
 
+            category(R.string.upload_selection)
+
+            switch(
+                value = telegram::selRouting,
+                icon = R.drawable.ic_baseline_domain,
+                title = R.string.sel_routing,
+                summary = R.string.sel_routing_summary,
+            )
+
+            switch(
+                value = telegram::selEnv,
+                icon = R.drawable.ic_baseline_info,
+                title = R.string.sel_env,
+                summary = R.string.sel_env_summary,
+            )
+
+            switch(
+                value = telegram::selKernelLog,
+                icon = R.drawable.ic_baseline_assignment,
+                title = R.string.sel_kernel_log,
+                summary = R.string.sel_kernel_log_summary,
+            ) {
+                listener = OnChangedListener {
+                    // 只在勾上时拉起采集。取消勾选不发停止。
+                    if (telegram.selKernelLog) {
+                        requests.trySend(Request.StartKernelLog)
+                    }
+                }
+            }
+
+            switch(
+                value = telegram::selCrashes,
+                icon = R.drawable.ic_baseline_flash_on,
+                title = R.string.sel_crashes,
+                summary = R.string.sel_crashes_summary,
+            )
+
+            switch(
+                value = telegram::selExtra,
+                icon = R.drawable.ic_baseline_publish,
+                title = R.string.sel_extra,
+                summary = R.string.sel_extra_summary,
+            )
+
+            clickable(
+                title = R.string.preview_upload,
+                icon = R.drawable.ic_baseline_info,
+            ) {
+                clicked {
+                    requests.trySend(Request.PreviewUpload)
+                }
+            }
+
+            clickable(
+                title = R.string.upload_explain,
+                icon = R.drawable.ic_baseline_info,
+            ) {
+                clicked {
+                    launch {
+                        showTextPage(
+                            R.string.upload_explain,
+                            context.getString(R.string.upload_explain_body),
+                        )
+                    }
+                }
+            }
+
             val autoPref = switch(
                 value = telegram::autoUpload,
                 icon = R.drawable.ic_baseline_publish,
@@ -225,11 +315,18 @@ private fun formatUploadStatus(context: Context, store: TelegramStore): String {
         parts.add(context.getString(R.string.last_upload_never))
     } else {
         if (last > 0L) {
+            val redacted = if (store.lastUploadRedacted) {
+                context.getString(R.string.redacted_yes)
+            } else {
+                context.getString(R.string.redacted_no)
+            }
             parts.add(
                 context.getString(
                     R.string.last_upload_summary,
                     formatWhen(last),
                     formatSize(store.lastUploadBytes),
+                    formatItems(context, store.lastUploadItems),
+                    redacted,
                 )
             )
         }
@@ -246,6 +343,23 @@ private fun formatUploadStatus(context: Context, store: TelegramStore): String {
         }
     }
     return parts.joinToString("\n")
+}
+
+private fun formatItems(context: Context, csv: String): String {
+    if (csv.isBlank()) return context.getString(R.string.upload_items_unknown)
+    val sep = if (Locale.getDefault().language == "zh") "、" else ", "
+    val labels = csv.split(',').mapNotNull { key ->
+        val res = when (key.trim()) {
+            "routing" -> R.string.sel_routing
+            "env" -> R.string.sel_env
+            "kernel_log" -> R.string.sel_kernel_log
+            "crashes" -> R.string.sel_crashes
+            "extra" -> R.string.sel_extra
+            else -> null
+        }
+        res?.let { context.getString(it) }
+    }
+    return if (labels.isEmpty()) context.getString(R.string.upload_items_unknown) else labels.joinToString(sep)
 }
 
 private fun formatWhen(ms: Long): String {

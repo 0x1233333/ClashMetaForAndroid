@@ -6,6 +6,7 @@ import com.github.kr328.clash.common.Global
 import com.github.kr328.clash.common.compat.currentProcessName
 import com.github.kr328.clash.common.log.Log
 import com.github.kr328.clash.diag.AutoUploader
+import com.github.kr328.clash.diag.KernelCapture
 import com.github.kr328.clash.diag.RoutingSampler
 import com.github.kr328.clash.remote.Remote
 import com.github.kr328.clash.service.util.TunnelDiag
@@ -30,6 +31,7 @@ class MainApplication : Application() {
         TunnelDiag.hooks = object : TunnelDiag.Hooks {
             override fun start(context: Context) {
                 RoutingSampler.start(context)
+                KernelCapture.startIfEnabled(context)
             }
 
             override fun stop() {
