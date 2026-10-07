@@ -7,6 +7,7 @@ import com.github.kr328.clash.common.log.Log
 import com.github.kr328.clash.service.clash.clashRuntime
 import com.github.kr328.clash.service.clash.module.*
 import com.github.kr328.clash.service.store.ServiceStore
+import com.github.kr328.clash.service.util.TunnelDiag
 import com.github.kr328.clash.service.util.cancelAndJoinBlocking
 import com.github.kr328.clash.service.util.sendClashStarted
 import com.github.kr328.clash.service.util.sendClashStopped
@@ -20,6 +21,7 @@ class ClashService : BaseService() {
         get() = this
 
     private var reason: String? = null
+    private var routingSamplerStarted = false
 
     private val runtime = clashRuntime {
         val store = ServiceStore(self)
@@ -80,6 +82,8 @@ class ClashService : BaseService() {
         StaticNotificationModule.notifyLoadingNotification(this)
 
         runtime.launch()
+        TunnelDiag.start(this)
+        routingSamplerStarted = true
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -93,6 +97,11 @@ class ClashService : BaseService() {
     }
 
     override fun onDestroy() {
+        if (routingSamplerStarted) {
+            routingSamplerStarted = false
+            TunnelDiag.stop()
+        }
+
         StatusProvider.serviceRunning = false
 
         sendClashStopped(reason)

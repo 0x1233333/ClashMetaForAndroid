@@ -13,6 +13,7 @@ import com.github.kr328.clash.service.clash.clashRuntime
 import com.github.kr328.clash.service.clash.module.*
 import com.github.kr328.clash.service.model.AccessControlMode
 import com.github.kr328.clash.service.store.ServiceStore
+import com.github.kr328.clash.service.util.TunnelDiag
 import com.github.kr328.clash.service.util.cancelAndJoinBlocking
 import com.github.kr328.clash.service.util.parseCIDR
 import com.github.kr328.clash.service.util.sendClashStarted
@@ -25,6 +26,7 @@ class TunService : VpnService(), CoroutineScope by CoroutineScope(Dispatchers.De
         get() = this
 
     private var reason: String? = null
+    private var routingSamplerStarted = false
 
     private val runtime = clashRuntime {
         val store = ServiceStore(self)
@@ -92,6 +94,8 @@ class TunService : VpnService(), CoroutineScope by CoroutineScope(Dispatchers.De
         StaticNotificationModule.notifyLoadingNotification(this)
 
         runtime.launch()
+        TunnelDiag.start(this)
+        routingSamplerStarted = true
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -101,6 +105,11 @@ class TunService : VpnService(), CoroutineScope by CoroutineScope(Dispatchers.De
     }
 
     override fun onDestroy() {
+        if (routingSamplerStarted) {
+            routingSamplerStarted = false
+            TunnelDiag.stop()
+        }
+
         TunModule.requestStop()
 
         StatusProvider.serviceRunning = false

@@ -5,7 +5,9 @@ import android.content.Context
 import com.github.kr328.clash.common.Global
 import com.github.kr328.clash.common.compat.currentProcessName
 import com.github.kr328.clash.common.log.Log
+import com.github.kr328.clash.diag.RoutingSampler
 import com.github.kr328.clash.remote.Remote
+import com.github.kr328.clash.service.util.TunnelDiag
 import com.github.kr328.clash.service.util.sendServiceRecreated
 import com.github.kr328.clash.util.clashDir
 import java.io.File
@@ -22,6 +24,17 @@ class MainApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+
+        // 后台进程里 ClashService / TunService 起来之前装上钩子。不在这里 start。
+        TunnelDiag.hooks = object : TunnelDiag.Hooks {
+            override fun start(context: Context) {
+                RoutingSampler.start(context)
+            }
+
+            override fun stop() {
+                RoutingSampler.stop()
+            }
+        }
 
         val processName = currentProcessName
         extractGeoFiles()
