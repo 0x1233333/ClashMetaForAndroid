@@ -11,6 +11,7 @@ object TunnelDiag {
     interface Hooks {
         fun start(context: Context)
         fun stop()
+        fun onHealthTick(context: Context) {}
     }
 
     @Volatile
@@ -27,5 +28,9 @@ object TunnelDiag {
 
     fun stop() {
         hooks?.stop()
+    }
+
+    fun onHealthTick(context: Context) {
+        hooks?.onHealthTick(context)
     }
 }

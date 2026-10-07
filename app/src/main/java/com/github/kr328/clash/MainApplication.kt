@@ -5,6 +5,7 @@ import android.content.Context
 import com.github.kr328.clash.common.Global
 import com.github.kr328.clash.common.compat.currentProcessName
 import com.github.kr328.clash.common.log.Log
+import com.github.kr328.clash.diag.AutoUploader
 import com.github.kr328.clash.diag.RoutingSampler
 import com.github.kr328.clash.remote.Remote
 import com.github.kr328.clash.service.util.TunnelDiag
@@ -33,6 +34,10 @@ class MainApplication : Application() {
 
             override fun stop() {
                 RoutingSampler.stop()
+            }
+
+            override fun onHealthTick(context: Context) {
+                AutoUploader.tick(context)
             }
         }
 

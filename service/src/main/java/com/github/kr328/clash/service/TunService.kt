@@ -44,6 +44,7 @@ class TunService : VpnService(), CoroutineScope by CoroutineScope(Dispatchers.De
         install(AppListCacheModule(self))
         install(TimeZoneModule(self))
         install(SuspendModule(self))
+        install(SmartHealthModule(self) { config.requestReload() })
 
         try {
             tun.open()

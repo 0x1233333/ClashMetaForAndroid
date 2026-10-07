@@ -10,6 +10,7 @@ import android.os.PowerManager
 import androidx.core.content.getSystemService
 import com.github.kr328.clash.common.log.Log
 import com.github.kr328.clash.core.Clash
+import com.github.kr328.clash.service.util.TunnelDiag
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -91,6 +92,7 @@ class SmartHealthModule(
 
         try {
             while (true) {
+                TunnelDiag.onHealthTick(service)
                 if (power.isInteractive) {
                     checkSmartGroups()
                     waitEvents(currentIntervalMs())

@@ -1,15 +1,21 @@
 package com.github.kr328.clash
 
-import android.content.ComponentName
 import android.content.pm.PackageManager
 import com.github.kr328.clash.common.util.componentName
 import com.github.kr328.clash.design.AppSettingsDesign
+import com.github.kr328.clash.design.R
+import com.github.kr328.clash.design.dialog.withModelProgressBar
 import com.github.kr328.clash.design.model.Behavior
 import com.github.kr328.clash.design.store.UiStore.Companion.mainActivityAlias
+import com.github.kr328.clash.design.ui.ToastDuration
+import com.github.kr328.clash.diag.AutoUploader
 import com.github.kr328.clash.service.store.ServiceStore
 import com.github.kr328.clash.util.ApplicationObserver
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withContext
 
 class AppSettingsActivity : BaseActivity<AppSettingsDesign>(), Behavior {
     override suspend fun main() {
@@ -34,8 +40,49 @@ class AppSettingsActivity : BaseActivity<AppSettingsDesign>(), Behavior {
                     }
                 }
                 design.requests.onReceive {
-                    ApplicationObserver.createdActivities.forEach {
-                        it.recreate()
+                    when (it) {
+                        AppSettingsDesign.Request.ReCreateAllActivities -> {
+                            ApplicationObserver.createdActivities.forEach { activity ->
+                                activity.recreate()
+                            }
+                        }
+                        AppSettingsDesign.Request.UploadNow -> {
+                            val outcome = try {
+                                withModelProgressBar {
+                                    configure {
+                                        isIndeterminate = true
+                                        text = getString(R.string.tg_uploading)
+                                    }
+                                    withContext(Dispatchers.IO) {
+                                        AutoUploader.uploadNow(this@AppSettingsActivity)
+                                    }
+                                }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                AutoUploader.Outcome.Failed(e.message ?: e.javaClass.simpleName)
+                            }
+                            design.patchUploadStatus()
+                            when (outcome) {
+                                is AutoUploader.Outcome.Uploaded ->
+                                    design.showToast(R.string.tg_upload_ok, ToastDuration.Short)
+                                is AutoUploader.Outcome.Failed ->
+                                    design.showToast(
+                                        getString(R.string.tg_upload_failed) + ": " + outcome.reason,
+                                        ToastDuration.Long,
+                                    )
+                                AutoUploader.Outcome.NotConfigured ->
+                                    design.showToast(R.string.tg_not_configured, ToastDuration.Long)
+                                AutoUploader.Outcome.SkippedEmpty ->
+                                    design.showToast(R.string.tg_upload_skipped_empty, ToastDuration.Long)
+                                AutoUploader.Outcome.SkippedTunnel ->
+                                    design.showToast(R.string.tg_upload_skipped_tunnel, ToastDuration.Long)
+                                AutoUploader.Outcome.Busy ->
+                                    design.showToast(R.string.tg_uploading, ToastDuration.Short)
+                                AutoUploader.Outcome.NotDue ->
+                                    design.showToast(R.string.tg_upload_ok, ToastDuration.Short)
+                            }
+                        }
                     }
                 }
             }
