@@ -67,6 +67,11 @@
             android:authorities="${applicationId}.settings"
             android:exported="false"
             android:process=":background" />
+        <provider
+            android:name=".TelegramPreferenceProvider"
+            android:authorities="${applicationId}.telegram"
+            android:exported="false"
+            android:process=":background" />
 
         <receiver
             android:name=".ProfileReceiver"

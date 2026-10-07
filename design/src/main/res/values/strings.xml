@@ -135,6 +135,24 @@
     <string name="chat_id">Chat ID</string>
     <string name="not_set">Not set</string>
     <string name="tg_settings_hint">Only used to upload a diagnostic package. The token stays on this device.</string>
+    <string name="send_to_telegram">Send to Telegram</string>
+    <string name="auto_upload">Auto-upload diagnostic package</string>
+    <string name="auto_upload_summary">Off = never send automatically</string>
+    <string name="upload_interval">Upload interval</string>
+    <string name="upload_interval_6h">Every 6 hours</string>
+    <string name="upload_interval_12h">Every 12 hours</string>
+    <string name="upload_interval_24h">Every 24 hours</string>
+    <string name="upload_on_stall">Upload immediately on stall</string>
+    <string name="upload_on_stall_summary">When the sampler sees a new stalled event, upload soon (at most every 30 minutes)</string>
+    <string name="last_upload">Last / next upload</string>
+    <string name="last_upload_never">Never uploaded</string>
+    <string name="last_upload_summary">Last %1$s · %2$s · redacted</string>
+    <string name="last_upload_failed">Last attempt failed: %s</string>
+    <string name="next_upload_summary">Next %s</string>
+    <string name="next_upload_soon">Next tick</string>
+    <string name="upload_now">Upload once now</string>
+    <string name="tg_upload_skipped_empty">Nothing to upload yet</string>
+    <string name="tg_upload_skipped_tunnel">Start the tunnel first</string>
 
     <string name="behavior">Behavior</string>
     <string name="network">Network</string>

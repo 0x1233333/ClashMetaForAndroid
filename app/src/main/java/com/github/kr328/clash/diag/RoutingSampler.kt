@@ -16,6 +16,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicLong
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -54,6 +55,7 @@ class RoutingSampler private constructor(
     private var lastWeightsAt = 0L
     private var lastWeights: Map<String, List<DiagJson.Ranked>>? = null
     @Volatile private var lastHeavyAt = 0L
+    private val stalledGeneration = AtomicLong(0)
 
     private fun launch() {
         val created = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -111,6 +113,7 @@ class RoutingSampler private constructor(
             val screen = readScreen()
             val snap = heavy
             val lines = ArrayList<String>(conns.size)
+            var addedStall = 0
 
             synchronized(trackLock) {
                 if (!running) return
@@ -128,6 +131,8 @@ class RoutingSampler private constructor(
                     tracks[conn.id] = Track(conn.download, conn.upload, lastChange)
                     // 第一次见到这条连接没有历史可比,idle 记 0;之后只在字节增加时清零。
                     val idleS = if (prev == null) 0.0 else (nowMono - lastChange) / 1000.0
+                    val stalled = idleS > STALL_IDLE_S
+                    if (stalled) addedStall++
                     val node = DiagJson.nodeName(conn.chains)
                     val (chosen, alts) = matchAlternatives(node, conn.chains, snap)
                     lines.add(
@@ -151,7 +156,7 @@ class RoutingSampler private constructor(
                             upRate = conn.maxUploadRate,
                             ageS = DiagJson.ageSeconds(conn.start, nowWall),
                             idleS = DiagJson.round1(idleS),
-                            stalled = idleS > STALL_IDLE_S,
+                            stalled = stalled,
                             netType = netType,
                             screen = screen,
                             chosenWeight = chosen,
@@ -166,7 +171,10 @@ class RoutingSampler private constructor(
                 }
             }
 
-            if (running) routingStore.appendAll(lines)
+            if (running) {
+                routingStore.appendAll(lines)
+                if (addedStall > 0) stalledGeneration.addAndGet(addedStall.toLong())
+            }
         } finally {
             // 连接表失败也要把这一轮 60 秒权重快照落盘。
             if (refreshed && running) writeWeightsSnapshot()
@@ -390,6 +398,10 @@ class RoutingSampler private constructor(
                 current.also { current = null }
             }
             sampler?.shutdown()
+        }
+
+        fun stalledGeneration(): Long {
+            return synchronized(gate) { current?.stalledGeneration?.get() ?: 0L }
         }
     }
 }

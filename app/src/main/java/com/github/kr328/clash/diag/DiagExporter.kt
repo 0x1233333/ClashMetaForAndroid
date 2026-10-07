@@ -43,13 +43,13 @@ object DiagExporter {
 
     private data class Part(val name: String, val bytes: ByteArray, val lines: Int)
 
-    fun buildBundle(context: Context, redact: Boolean = true): File {
+    fun buildBundle(context: Context, redact: Boolean = true, includeKernel: Boolean = true): File {
         val app = context.applicationContext
         val dir = File(app.cacheDir, "export")
         if (!dir.isDirectory && !dir.mkdirs() && !dir.isDirectory) {
             throw IOException("mkdir ${dir.absolutePath} failed")
         }
-        val parts = assemble(app, redact)
+        val parts = assemble(app, redact, includeKernel)
         val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
         var out = File(dir, "clash-smart-diag-$stamp.zip")
         if (out.exists()) {
@@ -91,7 +91,7 @@ object DiagExporter {
     }
 
     fun previewText(context: Context, redact: Boolean = true): String {
-        val parts = assemble(context.applicationContext, redact)
+        val parts = assemble(context.applicationContext, redact, includeKernel = true)
         val sb = StringBuilder()
         for (part in parts) {
             sb.append(part.name)
@@ -127,9 +127,23 @@ object DiagExporter {
         return sb.toString()
     }
 
-    private fun assemble(context: Context, redact: Boolean): List<Part> {
+    fun sourcePayloadBytes(context: Context): Long {
+        val diagDir = File(context.applicationContext.filesDir, "diag")
+        var total = 0L
+        for (name in listOf("routing.jsonl", "weights.jsonl")) {
+            val file = File(diagDir, name)
+            if (file.isFile) total += file.length()
+        }
+        return total
+    }
+
+    private fun assemble(context: Context, redact: Boolean, includeKernel: Boolean): List<Part> {
         val diagDir = File(context.filesDir, "diag")
-        val names = listOf("routing.jsonl", "weights.jsonl", "crashes.jsonl", "events.jsonl")
+        val names = if (includeKernel) {
+            listOf("routing.jsonl", "weights.jsonl", "crashes.jsonl", "events.jsonl")
+        } else {
+            listOf("routing.jsonl", "weights.jsonl")
+        }
         val raws = LinkedHashMap<String, ByteArray>()
         val nodeNames = LinkedHashSet<String>()
         for (name in names) {
@@ -152,14 +166,16 @@ object DiagExporter {
             if (bytes.isEmpty()) continue
             parts.add(Part(name, bytes, countLines(bytes)))
         }
-        val kernel = readLatestKernel(context)
-        if (kernel != null && kernel.isNotEmpty()) {
-            val bytes = if (redact && nodeNames.isNotEmpty()) {
-                replaceNames(String(kernel, Charsets.UTF_8), nodeNames).toByteArray(Charsets.UTF_8)
-            } else {
-                kernel
+        if (includeKernel) {
+            val kernel = readLatestKernel(context)
+            if (kernel != null && kernel.isNotEmpty()) {
+                val bytes = if (redact && nodeNames.isNotEmpty()) {
+                    replaceNames(String(kernel, Charsets.UTF_8), nodeNames).toByteArray(Charsets.UTF_8)
+                } else {
+                    kernel
+                }
+                if (bytes.isNotEmpty()) parts.add(Part("kernel.log", bytes, countLines(bytes)))
             }
-            if (bytes.isNotEmpty()) parts.add(Part("kernel.log", bytes, countLines(bytes)))
         }
         var envText = buildEnv(context)
         if (redact && nodeNames.isNotEmpty()) envText = scrubNames(envText, nodeNames)

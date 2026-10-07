@@ -23,6 +23,7 @@ class LogsDesign(context: Context) : Design<LogsDesign.Request>(context) {
         object StartLogcat : Request()
         object DeleteAll : Request()
         object ExportDiag : Request()
+        object SendTelegram : Request()
 
         data class OpenFile(val file: LogFile) : Request()
         data class Share(val file: File) : Request()

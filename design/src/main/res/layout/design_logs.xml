@@ -44,7 +44,7 @@
                         android:layout_height="@dimen/item_tailing_component_size"
                         android:layout_centerVertical="true"
                         android:layout_marginStart="@dimen/item_tailing_margin"
-                        android:layout_toStartOf="@id/share_latest_view"
+                        android:layout_toStartOf="@id/send_telegram_view"
                         android:background="?attr/selectableItemBackgroundBorderless"
                         android:clickable="true"
                         android:contentDescription="@string/export_diag"
@@ -52,6 +52,21 @@
                         android:onClick="@{() -> self.requests.offer(Request.ExportDiag.INSTANCE)}"
                         android:padding="@dimen/toolbar_image_action_padding"
                         android:src="@drawable/ic_baseline_get_app" />
+
+                    <ImageView
+                        android:id="@+id/send_telegram_view"
+                        android:layout_width="@dimen/item_tailing_component_size"
+                        android:layout_height="@dimen/item_tailing_component_size"
+                        android:layout_centerVertical="true"
+                        android:layout_marginStart="@dimen/item_tailing_margin"
+                        android:layout_toStartOf="@id/share_latest_view"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:clickable="true"
+                        android:contentDescription="@string/send_to_telegram"
+                        android:focusable="true"
+                        android:onClick="@{() -> self.requests.offer(Request.SendTelegram.INSTANCE)}"
+                        android:padding="@dimen/toolbar_image_action_padding"
+                        android:src="@drawable/ic_baseline_send" />
 
                     <ImageView
                         android:id="@+id/share_latest_view"

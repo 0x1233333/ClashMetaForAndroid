@@ -66,7 +66,7 @@ class LogsActivity : BaseActivity<LogsDesign>() {
                         LogsDesign.Request.ExportDiag -> {
                             val zip = try {
                                 withContext(Dispatchers.IO) {
-                                    DiagExporter.buildBundle(this@LogsActivity)
+                                    DiagExporter.buildBundle(this@LogsActivity, redact = true)
                                 }
                             } catch (e: CancellationException) {
                                 throw e
@@ -88,6 +88,33 @@ class LogsActivity : BaseActivity<LogsDesign>() {
                                         }
                                     }
                                     null -> Unit
+                                }
+                            }
+                        }
+                        LogsDesign.Request.SendTelegram -> {
+                            val store = TelegramStore(this@LogsActivity)
+                            if (store.botToken.trim().isEmpty() || store.chatId.trim().isEmpty()) {
+                                design.showToast(R.string.tg_not_configured, ToastDuration.Long)
+                            } else {
+                                val zip = try {
+                                    withContext(Dispatchers.IO) {
+                                        DiagExporter.buildBundle(this@LogsActivity, redact = true)
+                                    }
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    design.showToast(R.string.share_failed, ToastDuration.Long)
+                                    null
+                                }
+                                if (zip != null) {
+                                    try {
+                                        uploadToTelegram(design, zip)
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        design.showToast(R.string.tg_upload_failed, ToastDuration.Long)
+                                        shareFile(design, zip)
+                                    }
                                 }
                             }
                         }
