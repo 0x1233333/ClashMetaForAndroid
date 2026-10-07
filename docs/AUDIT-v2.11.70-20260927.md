@@ -11,7 +11,7 @@
 ### 🔴 P0-1 健康守护可能永久卡死(静默失效)
 - 位置:`service/.../module/SmartHealthModule.kt:147` → `Clash.urlTestGroup(name).await()`
 - 证据:同文件第 42 行 `private const val TEST_TIMEOUT_MS = 5000` **声明后从未被引用**(全仓只有这一处出现)。说明当初想加超时但漏了。
-- 后果:`await()` 依赖内核回调;一旦内核重载/切订阅/回调丢失,协程永久挂起 → 后续所有测速与"热重载看门狗"静默失效,用户看不出任何异常(页面只在别处显示"距上次测速")。
+- 后果:`await()` 依赖内核回调;一旦内核重载/切订阅/回调丢失,协程永久挂起 → 后续所有测速与"热重载看门狗"静默失效,界面无法察觉(页面只在别处显示"距上次测速")。
 - 修法:`withTimeoutOrNull(TEST_TIMEOUT_MS * N) { ... }`,超时按失败计入 `failStreak`。
 
 ### 🔴 P0-2 CI 会静默产出并上传"未签名包"
@@ -22,8 +22,8 @@
 ### 🔴 P0-3 订阅 `ipv6` + 节点域名解析走明文 DNS → IPv6-only 节点整段废掉(9/27 复核定稿,**两层根因**)
 - 位置:`core/src/main/golang/native/config/process.go` 整条处理器链**没有任何 ipv6 / DNS 解析路径处理**
 - 证据(本机实测,详见 `REPORT-ipv6-node-connectivity-20260927.md`):
-  - **第一层**:同一订阅 110 节点,`ipv6:false` → 39 通过(48 个 `-v6-` 全挂);顶层 `ipv6:true` → 89 通过、48/48 v6 全通、零回归;官方内核与我们 fork 逐节点一致。
-  - **第二层(用户报"顶层改了还是连不上"的真因)**:订阅 `dns.proxy-server-nameserver` 是域名式 DoH + 明文 UDP;在家用网关劫持明文 53 的网络里 → `A → 198.18.x.x`(fake-ip)、`AAAA → 空` → 48 个 v6 依旧全挂(37/110)。**只把该项换成 IP 字面量 DoH → 89/110、48/48**,其余 DNS 键(fake-ip / nameserver-policy / respect-rules)一个没动。
+  - **第一层**:同一订阅 110 节点,`ipv6:false` → 39 通过(48 个 `-v6-` 全挂);顶层 `ipv6:true` → 89 通过、48/48 v6 全通、零回归;官方内核与本 fork 逐节点一致。
+  - **第二层("顶层改了仍连不上"的真因)**:订阅 `dns.proxy-server-nameserver` 是域名式 DoH + 明文 UDP;在家用网关劫持明文 53 的网络里 → `A → 198.18.x.x`(fake-ip)、`AAAA → 空` → 48 个 v6 依旧全挂(37/110)。**只把该项换成 IP 字面量 DoH → 89/110、48/48**,其余 DNS 键(fake-ip / nameserver-policy / respect-rules)一个没动。
 - 修法(两条都做):①置顶层 `cfg.IPv6 = true`;②把 `cfg.DNS.ProxyServerNameserver` 里**非 IP 字面量**的项替换为 `https://1.1.1.1/dns-query` / `https://8.8.8.8/dns-query`,并设 `cfg.DNS.IPv6Timeout = 2000`(默认 100ms,移动网络下 AAAA 常迟到;`dns/resolver.go:77-108`)。状态页可显示 IPv6 开/关与当前 DNS 解析路径。
 
 ### 🟠 P1-4 回环控制器无认证 + 任意来源 CORS(隐私/被接管)
@@ -33,14 +33,14 @@
   cfg.ExternalControllerCors = RawCors{AllowOrigins: []string{"*"}, AllowPrivateNetwork: true}
   ```
 - 代码注释写"loopback-only (same app UID on Android), so auth adds nothing here"——**这个假设是错的**:Android 上 `127.0.0.1` 跨 App 共享(只有网络命名空间才隔离)。
-- 后果:手机上**任何** App 或网页都能 `GET /connections`(泄露你访问的域名)、`PUT /proxies`(改你的节点)、读配置。
-- 修法:注入时生成随机 `secret` 并让仪表盘带 `Authorization: Bearer`;CORS 收紧到自己的来源;或让 smart.html 走内核自带 `external-ui`(`process.go:56-58` 已设 `profileDir/ui`)实现同源。
+- 后果:手机上**任何** App 或网页都能 `GET /connections`(泄露访问的域名)、`PUT /proxies`(改节点)、读配置。
+- 修法:注入时生成随机 `secret` 并让仪表盘带 `Authorization: *** 收紧到自己的来源;或让 smart.html 走内核自带 `external-ui`(`process.go:56-58` 已设 `profileDir/ui`)实现同源。
 
 ### 🟠 P1-5 Model.bin 安装不可靠(可能用错模型 / 永不修复)
 - 位置:`smart_adapt.go:32-55`
 - 问题 1:只 `os.Stat` 判"文件存在"就返回,**不校验大小/哈希** → 之前被内核自己下载过的、旧版本的、或截断的 Model.bin 会永久生效(smart 用错模型跑)。
 - 问题 2:`os.WriteFile` **非原子** → 写一半被杀 → 留下截断文件,而下次启动因"文件存在"不再重写。
-- 问题 3:`ensureSmartModel()` 在函数第 122 行早退之后 → 若订阅里没有可转换的组(用户自己用覆写加 smart 组),模型不会落地。
+- 问题 3:`ensureSmartModel()` 在函数第 122 行早退之后 → 若订阅里没有可转换的组(通过自定义覆写添加 smart 组),模型不会落地。
 - 修法:比对 `len(smartModelBin)`(或 sha256)→ 不符则"写临时文件 + rename";把 `ensureSmartModel()` 移到早退之前。
 
 ### 🟠 P1-6 日志函数用错,错误原文被吞
@@ -93,8 +93,8 @@
 
 ### ⚪ P3-17 上游遗留(建议**不要**修)
 - `gofmt -l` 报 5 个文件不合规:`native/app.go`、`native/app/app.go`、`native/debug.go`、`native/platform/limit.go`、`native/platform/procfs.go`。
-- 逐个查过 git 历史:全部是**上游 CMFA 的提交**("核心依赖变更mihomo"/"Fix: fix time zone"/"Refactor: refactor clash core building"/"Improve: Try tcp6&udp6 files first…")。改它们只会让每日 upstream merge 徒增冲突。我们自己的 `native/config/*.go` 是合规的。
-- 建议:改成"CI 只对我们新增文件跑 gofmt 检查"。
+- 逐个查过 git 历史:全部是**上游 CMFA 的提交**("核心依赖变更mihomo"/"Fix: fix time zone"/"Refactor: refactor clash core building"/"Improve: Try tcp6&udp6 files first…")。改它们只会让每日 upstream merge 徒增冲突。本项目的 `native/config/*.go` 是合规的。
+- 建议:改成"CI 只对新增文件跑 gofmt 检查"。
 
 ### ⚪ P3-18 健康守护的固定 3 分钟节奏偏激进
 - `INTERVAL_MS = 3 * 60 * 1000` + 亮屏时每轮测**所有**组的所有成员。虽然有"大组优先 + 成员去重",对电量/流量仍不便宜。
@@ -107,8 +107,8 @@
 | # | 优化 | 实测收益 | 改动成本 |
 |---|---|---|---|
 | O1 | Go 产物剪裁:`GOFLAGS="-ldflags=-s -w"` | ❌ **在 Android 流水线上实测无效,已撤销**:darwin 裸构建 77.0→54.7 MiB 的 −29% **不能外推** —— Android 的 Go 产物本来就已经是剥过的(`core/build/intermediates/merged_jni_libs/.../libclash.so` 里 0 个 `.symtab`/`.debug_*` 节),加不加 GOFLAGS **字节数完全相同**(73,834,872 B)。CI 里那行已删除 | — |
-| O2 | 删 `assets/ASN.mmdb` | ❌ **不能删**:`MainApplication.kt:62-68` 启动时把 `assets/ASN.mmdb` 拷进内核目录,内核 `component/mmdb/mmdb.go:82` 的 `ASNInstance()` 打开失败会直接 `log.Fatalln` → 删了会炸。真要省体积只能改成首次运行时下载(行为变更,需用户拍板) | 高,不建议 |
-| O3 | 可选瘦身 | `libbarhopper_v3.so` 4.7 MiB + `mlkit_barcode_models` 0.9 MiB(扫码用);`BundleMRS.7z` 9.2 MiB(只有用 mrs rule-provider 才需要) | 中(取决于你是否扫码/用 mrs) |
+| O2 | 删 `assets/ASN.mmdb` | ❌ **不能删**:`MainApplication.kt:62-68` 启动时把 `assets/ASN.mmdb` 拷进内核目录,内核 `component/mmdb/mmdb.go:82` 的 `ASNInstance()` 打开失败会直接 `log.Fatalln` → 删了会炸。真要省体积只能改成首次运行时下载(行为变更,需决策) | 高,不建议 |
+| O3 | 可选瘦身 | `libbarhopper_v3.so` 4.7 MiB + `mlkit_barcode_models` 0.9 MiB(扫码用);`BundleMRS.7z` 9.2 MiB(只有用 mrs rule-provider 才需要) | 中(取决于是否使用扫码 / mrs) |
 | O4 | 仪表盘轮询降频 + 后台暂停(见 P2-14) | 后台流量/CPU 归零;前台每 15 秒的全量 `/proxies` 消失 | 低 |
 | O5 | CI 加发布校验 + sha256 清单(见 P2-12) | 以后"回读哈希"自动化 | 低 |
 | O6 | 把 `smartAdaptEnabled` 这类常量暴露成设置项(含 ipv6、健康检查周期、调参面板) | 不用改代码就能调 | 中 |
@@ -124,7 +124,7 @@
 
 ## 四、建议执行顺序
 
-1. P0-3(ipv6,用户实际痛点)+ P0-1(健康守护超时)+ P0-6(日志)→ 都是几行改动,风险低
+1. P0-3(ipv6,实际痛点)+ P0-1(健康守护超时)+ P0-6(日志)→ 都是几行改动,风险低
 2. P0-2(CI 未签名包 fail-fast)+ P2-9(patch 检查)+ P2-12(发布校验)→ 一次性把 CI 的坑堵上
 3. P1-5(Model.bin 校验+原子写)、P1-4(控制器认证)→ 需要动仪表盘,配合 O6/O7 一起做
 4. ~~O1/O2(瘦身)~~ → **已实测否决**(见 §二 更正),别再花时间
@@ -146,7 +146,7 @@
 | **连通性功能** | smart 内核跑真订阅 110 节点,配置 = 补丁输出等效值 | **84/110(手机现状 41/110);AAAA-only 48/48(现状 0/48)** ✅ |
 | **App 运行时** | 模拟器(arm64/Android 36)+ debug 包 + 本机 HTTP 供订阅 | 内核日志出现 `[SmartAdapt] converted 6 group(s)` + `[SmartDns] proxy-server-nameserver [...] -> [1.1.1.1/8.8.8.8]`;VPN 起(tun0 = 172.19.0.1/30,已转发);`ping` 通;**IPv6 节点域名解析出 AAAA**(`--> [2603:c024:...] AAAA from https://1.1.1.1:443/dns-query`)✅ |
 | **App 内核全量实测**(最强证据) | `adb forward tcp:9090` → 对 **App 自己正在跑的内核**逐个 `/proxies/<n>/delay` | 内核 `fork/alpha-3f25a6c-cmfa-2.11.70.debug`;**89/111 通过,AAAA-only 48/48**(手机现状 0/48);失败 22 个全是 REALITY 认证 / UDP443 干扰类,与桌面归类一致。原始数据 `~/clash-node-test/results_APP_kernel.json` ✅ |
-| **用户真机实测**(2026-09-27) | 打包 `com.github.metacubex.clash.meta`(⚠️ 必须关掉 `local.properties` 的 appId 覆盖,否则包名变 `.smart` 装成第三个 App)+ `-Pandroid.injected.testOnly=false`(否则 `INSTALL_FAILED_TEST_ONLY`)→ 用用户正式 jks 签名(指纹须 = `1a6b5a08…b6ccc`)→ `adb install -r` 原地升级 | 手机 v2.11.69.Meta → **v2.11.70.Meta,配置保留**;内核 `fork/alpha-3f25a6c-cmfa-2.11.70.meta`;logcat 出现 `[SmartAdapt] converted 5 group(s)` + `[SmartDns] [...] -> [1.1.1.1 / 8.8.8.8]`;`[DNS] cache hit <v6节点域名> --> [<AAAA>] AAAA`;**全量实测 90/111、AAAA-only 48/48**(`results_PHONE_kernel_lowconc.json`)✅ |
+| **真机实测**(2026-09-27) | 打包 `com.github.metacubex.clash.meta`(⚠️ 必须关掉 `local.properties` 的 appId 覆盖,否则包名变 `.smart` 装成第三个 App)+ `-Pandroid.injected.testOnly=false`(否则 `INSTALL_FAILED_TEST_ONLY`)→ 用正式签名密钥签名(指纹 = `1a6b5a08…b6ccc`)→ `adb install -r` 原地升级 | 手机 v2.11.69.Meta → **v2.11.70.Meta,配置保留**;内核 `fork/alpha-3f25a6c-cmfa-2.11.70.meta`;logcat 出现 `[SmartAdapt] converted 5 group(s)` + `[SmartDns] [...] -> [1.1.1.1 / 8.8.8.8]`;`[DNS] cache hit <v6节点域名> --> [<AAAA>] AAAA`;**全量实测 90/111、AAAA-only 48/48**(`results_PHONE_kernel_lowconc.json`)✅ |
 | ⚠️ 测试方法坑 | 移动网络带宽约 4 Mbps 时用 8 并发测延迟 → 大面积假失败(38/111);**降到 3 并发 + 超时 10s → 90/111**。别用桌面级并发去测手机网络 | — |
 | ⚠️ 假阴性坑 | `GET /configs` 在这个内核版本**不返回 dns 段**(只有顶层 `ipv6` 等)→ 拿它判断"补丁没生效"是错的;要看 `[SmartDns]` 启动日志或 `[DNS] ... AAAA` 解析日志 | — |
 | CI 门禁 | 拿真 APK 预演新校验步骤 | 线上 v2.11.70 签名包放行;v2.11.68 未签名包被拦(DOES NOT VERIFY)✅ |
@@ -157,9 +157,9 @@
 3. 无窗口模拟器要先 `svc power stayon true` + `cmd deviceidle whitelist +<pkg>`,否则任务会被压住。
 4. 内核日志在 logcat 里的 tag 是 `ClashMetaForAndroid`。
 
-## 六、2026-09-27 第二轮:性能/行为排查(用户点名三项)
+## 六、2026-09-27 第二轮:性能/行为排查(三项重点)
 
-### 6.1 证据(全部在用户真机 `com.github.metacubex.clash.meta` v2.11.70.Meta 上采样,只读)
+### 6.1 证据(全部在真机 `com.github.metacubex.clash.meta` v2.11.70.Meta 上采样,只读)
 
 | 观测 | 方法 | 结果 |
 |---|---|---|
@@ -185,7 +185,7 @@
 
 验证:JS `node --check` 通过;kotlin 随 `assembleMetaRelease` 编译通过;签名证书仍为 `1a6b5a08…b6ccc`;装到真机后 `SmartStatusActivity` 打开→切后台→再回前台,页面正常渲染并自动重新同步(截图 10:18 内核版本/内存 220.0MB 正常,无"无法连接内核"提示)。
 
-### 6.3 待用户拍板(内核侧,需要动 mihomo fork → 重新出内核)
+### 6.3 待决策项(内核侧,需要动 mihomo fork → 重新出内核)
 
 | 选项 | 做法 | 收益/风险 |
 |---|---|---|
@@ -196,7 +196,7 @@
 
 > 建议顺序:A + C(收益明确、风险低)→ B → D。
 
-### 6.4 已实施(2026-09-27,用户批准 A+C)
+### 6.4 已实施(2026-09-27,已采纳 A+C 方案)
 
 | 项 | 改动 | 提交 | 状态 |
 |---|---|---|---|
@@ -267,7 +267,7 @@
 
 ### 7.5 `GET /group/<组>/weights` 返回空 —— 已排查,**不是本轮改动所致**
 
-- 该端点读 `GetNodeWeightRankingCache` → 内部用 **`GetSubBytesByPath`**(本轮未改动的函数)→ 与我的改动无路径交集。
+- 该端点读 `GetNodeWeightRankingCache` → 内部用 **`GetSubBytesByPath`**(本轮未改动的函数)→ 与本次改动无路径交集。
 - 同一端点在**手机**上(用了一天、有样本)返回真实数据(`{"Name":"<某节点>","Rank":"MostUsed","Weight":100}`)。
 - 结论:模拟器新装、运行 ~10 分钟,ranking 样本不足 → 属既有行为(权重需足够样本才生成)。
 
@@ -284,7 +284,7 @@
 - `GetSubBytesByPath` 内部还有一处 `maxTargets*2` 上限的扫描(默认 1 万条 ≈ 10 MB 瞬时),有 `dbResultCache` 兜着,**本轮未动**。
 - 本轮的**效果指标**(RSS 是否真的不再 +0.7 MB/min、长跑是否稳定)需要在模拟器上跑更久才有曲线 —— 已完成 15 分钟采样,
   但真正结论要看小时级趋势;真机复测待手机接回。
-- 未发版:versionCode `211070 → 211071` / versionName `2.11.71` 仍待用户点头。
+- 未发版:versionCode `211070 → 211071` / versionName `2.11.71` 仍待发布。
 
 ## 八、18 项状态一览(2026-09-27 收尾,一眼看清还剩什么)
 
@@ -342,7 +342,7 @@
 | **App 内仪表盘(WebView)** | ✅ 内核版本/模式/`已同步 11:15:47`/分组标签/统计卡片全部正常,**无任何报错**(Chrome 验不了的那一步,在这里过) |
 | 运行期稳定性 | ✅ 零 panic、零 SmartStore 告警 |
 
-**仍未拿到**:一小时 RSS/CPU 曲线(后台采样中)、Kotlin 模块整组测速的周期证据(需等 ≥10 分钟观察节点 `history` 时间戳)。另外:**仓库里那份 tracked `release.keystore` 用现有口令打不开**(`keytool: keystore password was incorrect`)→ CI 出的包与本地真签名包**是否同一把钥匙,尚未验证**(若不同,CI 包无法覆盖安装本地包;用户当前发布走本地签名路径)。
+**仍未拿到**:一小时 RSS/CPU 曲线(后台采样中)、Kotlin 模块整组测速的周期证据(需等 ≥10 分钟观察节点 `history` 时间戳)。另外:**仓库里那份 tracked `release.keystore` 用现有口令打不开**(`keytool: keystore password was incorrect`)→ CI 出的包与本地真签名包**是否同一把钥匙,尚未验证**(若不同,CI 包无法覆盖安装本地包;当前发布走本地签名路径)。
 
 ### 7.10 两小时实测收尾:内存曲线 + 周期性整组测速的真实来源
 
@@ -362,7 +362,7 @@
 - 代码侧:`smart.go` 里那 4 个 5 分钟任务**只做只读分析**(`checkNodesStable` 读 `DelayHistoryForTestUrl`),`smart.go` 内**没有任何 `URLTest(` 调用**;真正发健康检查的唯一入口是 `groupbase.go:246` 的 `proxy.URLTest` → 只被 **`/group/<组>/delay`** 这个 HTTP 接口触发 = **App 侧调用**。
 - App 侧:`SmartHealthModule` 常量为 `INTERVAL_MS=10min`、`METERED=30min`、熄屏 60s 空转(`SCREEN_OFF_INTERVAL_MS`),首轮 = 服务起后 20 秒(日志实证 11:15:38)→ 代码符合预期。
 - **归因未完全确定**(模拟器上曾同时跑着两个 App 实例:release `.meta` 与调试 `.smart`,已停掉 release 那个)。但**结论不受影响:周期性整组测速确实存在**(~5 分钟一批),其链路成本在快网上测得 **CPU 峰值 ~9%、持续约 20 秒**;**在移动网络上还会占满上行/下行**(机制明确,本轮未测)。
-- 要真正消掉用户"用着用着卡一下"的那一下,得动审计 §6.3 的 **B 选项**(拉长/合并内核侧周期任务,或对近期已测节点跳过)→ 代价是节点异常发现变慢 → **需用户拍板,不在收尾时单方面改**。
+- 要真正消掉使用方"用着用着卡一下"的那一下,得动审计 §6.3 的 **B 选项**(拉长/合并内核侧周期任务,或对近期已测节点跳过)→ 代价是节点异常发现变慢 → **需决策,不在收尾时单方面改**。
 
 ### 7.11 第五轮:"用一段时间卡一下"的真正根因与修复(commit `c89eb0c1`)
 
@@ -370,7 +370,7 @@
 
 判定过程(两个实验):
 1. **熄屏实验**:熄屏后 11:40 那批健康检查**照旧发生** → 不是 App 发的(App 模块熄屏时正确停测,`SCREEN_OFF_INTERVAL_MS=60s` 只空转)→ 所以 App 侧任何省电/门控都管不到它。
-2. **代码定位**:`smart.go` 的 5 分钟任务全是只读分析(`checkNodesStable` 读 `DelayHistoryForTestUrl`),`AliveForTestUrl` 也只读缓存;真正的触发点是**订阅自己的组级 `interval`**(此前我的 grep 把 `adapter/provider` 过滤掉了,绕了一圈)。
+2. **代码定位**:`smart.go` 的 5 分钟任务全是只读分析(`checkNodesStable` 读 `DelayHistoryForTestUrl`),`AliveForTestUrl` 也只读缓存;真正的触发点是**订阅自己的组级 `interval`**(排查时最初的 grep 把 `adapter/provider` 过滤掉了,绕了一圈)。
 
 **修复(适配层,一处小改)**:`patchSmartAdapt` 在把 `url-test/fallback/load-balance` 转成 `smart` 时,把 `interval < 600` 的一律抬到 **600 秒**(只抬不降;`int`/`float64`/字符串三种写法都处理)。理由:smart 组自身有 10~15 分钟的稳定性/失效检测,节点真实失败会**立刻**进入存储统计并被选择器即时绕开,所以组级健康检查没必要 5 分钟一次。
 
@@ -402,7 +402,7 @@
 
 ### 7.12 第六轮:真机"断流"根因(DNS 竞速语义)+ 修复与极限验证(2026-10-01)
 
-**用户症状**:间歇"断流",上网中途不通,**必须关掉代理再打开才恢复**;通知栏一直显示 Running(服务没被杀);移动数据和 WiFi 都遇到过。
+**现象**:间歇"断流",上网中途不通,**必须关掉代理再打开才恢复**;通知栏一直显示 Running(服务没被杀);移动数据和 WiFi 都遇到过。
 
 **两处病灶**
 1. **我方引入**:`patchSmartDns` 把 `dns.proxy-server-nameserver` **整体替换**成两条境外 DoH(`1.1.1.1`、`8.8.8.8`)。本机实测 `8.8.8.8` 不可达(1.18s 无响应)→ 国内网络下这两条被阻断时**完全失去解析能力** → 节点域名解析失败 → 断流。
@@ -429,7 +429,7 @@
 
 ### 7.13 第七轮:Grok 复核(第 4 轮)后的三处收敛
 
-Grok 复核我的"剔除明文"实现后指出三处必须改:
+复核"剔除明文"实现后指出三处必须改:
 
 | # | 问题 | 修法 |
 |---|---|---|
@@ -442,8 +442,8 @@ Grok 复核我的"剔除明文"实现后指出三处必须改:
 `fallback [https://1.1.1.1/dns-query] + fallback-filter.ipcidr [0.0.0.0/32 127.0.0.1/32 240.0.0.0/4] (geoip off: only blackhole answers are re-queried)`;端到端 google 204 / youtube 200 / baidu 200 / github 200;节点抽样 v4 7/10(失败仍是一贯失败的 UDP443 类);**再次封死 1.1.1.1+8.8.8.8 后仍 google 204 / baidu 200**(测完 iptables 规则已清零)。
 
 **仍知未改(记录在案,不影响本次结论)**
-- `nameserver-policy` / `proxy-server-nameserver-policy` 里的条目**未被过滤**(我的改动只作用于三个列表)。本订阅 policy 的 10 条值全是 https,无明文,故当前无风险;若将来订阅在 policy 里写明文,需另做处理(有序 map 类型,改动面更大)。
-- `ts://` / `et://` 这类少见 scheme 会被我的白名单**误删**(Grok 指出)。取舍:宁可删掉少见 scheme,也不放明文进来。
+- `nameserver-policy` / `proxy-server-nameserver-policy` 里的条目**未被过滤**(本次改动只作用于三个列表)。本订阅 policy 的 10 条值全是 https,无明文,故当前无风险;若将来订阅在 policy 里写明文,需另做处理(有序 map 类型,改动面更大)。
+- `ts://` / `et://` 这类少见 scheme 会被该白名单**误删**(Grok 指出)。取舍:宁可删掉少见 scheme,也不放明文进来。
 
 ### 7.14 第八轮:回退 `dns.fallback`(Grok 第 4/5 轮揭示的副作用)
 
@@ -451,7 +451,7 @@ Grok 复核我的"剔除明文"实现后指出三处必须改:
 > 没有 A/AAAA 的成功应答(**NODATA / NXDOMAIN / CNAME**)会**整段改用 fallback**(`resolver.go:325-341`)。
 
 后果:`1.1.1.1` 在部分网络不可达 —— 而**浏览时广告/追踪/打错的域名会产生大量 NXDOMAIN**,每次都要白等一个 DNS 超时,
-这种"卡一下"本身就是用户抱怨的那种体验。**收益(仅 main 返回黑洞地址时补救)远小于副作用 → 整体回退** fallback 与 fallback-filter 的注入,
+这种"卡一下"就是典型的卡顿体验。**收益(仅 main 返回黑洞地址时补救)远小于副作用 → 整体回退** fallback 与 fallback-filter 的注入,
 DNS 解析器加固(剔除明文、国内字面量 DoH、白名单收紧)全部保留。
 
 实测(模拟器,调试包):`[SmartDns]` 日志只剩 3 条(无 fallback 行);端到端 google 204;
@@ -462,7 +462,7 @@ NXDOMAIN 域名(不存在域名 / `ads.doubleclick.net`)响应 ~2.2s,不再叠�
 
 ### 7.15 第九轮:发布 v2.11.71-beta + 完整验收与两处工具坑
 
-**发布方式(用户 2026-10-01 明确的规则)**:本地多轮测试通过后才动仓库;发布直接由仓库 CI 出;**未在真机长时间验证的一律标 pre-release(测试版)**。
+**发布规则(2026-10-01)**:本地多轮测试通过后才动仓库;发布直接由仓库 CI 出;**未在真机长时间验证的一律标 pre-release(测试版)**。
 
 | 项 | 内容 |
 |---|---|
