@@ -124,6 +124,17 @@
     <string name="share_latest_log">Share latest log</string>
     <string name="export_diag">Export diagnostic package</string>
     <string name="no_logs_to_share">No logs to share</string>
+    <string name="share_to_other_apps">Share to other apps</string>
+    <string name="upload_to_telegram">Upload to Telegram</string>
+    <string name="tg_not_configured">Set Bot Token and Chat ID under Settings → App first</string>
+    <string name="tg_upload_ok">Uploaded to Telegram</string>
+    <string name="tg_upload_failed">Telegram upload failed</string>
+    <string name="tg_uploading">Uploading to Telegram…</string>
+    <string name="telegram">Telegram</string>
+    <string name="bot_token">Bot Token</string>
+    <string name="chat_id">Chat ID</string>
+    <string name="not_set">Not set</string>
+    <string name="tg_settings_hint">Only used to upload a diagnostic package. The token stays on this device.</string>
 
     <string name="behavior">Behavior</string>
     <string name="network">Network</string>

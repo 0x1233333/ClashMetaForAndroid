@@ -38,6 +38,17 @@
     <string name="share_latest_log">分享最新日志</string>
     <string name="export_diag">导出诊断包</string>
     <string name="no_logs_to_share">没有可分享的日志</string>
+    <string name="share_to_other_apps">分享到其他 App</string>
+    <string name="upload_to_telegram">直传 Telegram</string>
+    <string name="tg_not_configured">请先在「设置 → 应用」里填写 Bot Token 和 Chat ID</string>
+    <string name="tg_upload_ok">已上传到 Telegram</string>
+    <string name="tg_upload_failed">Telegram 上传失败</string>
+    <string name="tg_uploading">正在上传到 Telegram…</string>
+    <string name="telegram">Telegram</string>
+    <string name="bot_token">Bot Token</string>
+    <string name="chat_id">Chat ID</string>
+    <string name="not_set">未填写</string>
+    <string name="tg_settings_hint">仅用于上传诊断包，Token 只保存在本机。</string>
     <string name="format_minutes">%d 分钟</string>
     <string name="format_profile_activated">%s 已激活</string>
     <string name="format_traffic_forwarded">%s 已转发</string>

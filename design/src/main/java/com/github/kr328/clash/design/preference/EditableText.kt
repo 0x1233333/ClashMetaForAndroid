@@ -22,6 +22,7 @@ fun <T> PreferenceScreen.editableText(
     @DrawableRes icon: Int? = null,
     @StringRes placeholder: Int? = null,
     @StringRes empty: Int? = null,
+    maskSummary: Boolean = false,
     configure: EditableTextPreference.() -> Unit = {},
 ): EditableTextPreference {
     val impl = object : EditableTextPreference, ClickablePreference by clickable(title, icon) {
@@ -37,6 +38,9 @@ fun <T> PreferenceScreen.editableText(
                     }
                     value.isEmpty() -> {
                         this.summary = this.empty
+                    }
+                    maskSummary -> {
+                        this.summary = "••••"
                     }
                     else -> {
                         this.summary = value

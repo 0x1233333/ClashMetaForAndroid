@@ -6,6 +6,7 @@ import com.github.kr328.clash.design.databinding.DesignSettingsCommonBinding
 import com.github.kr328.clash.design.model.Behavior
 import com.github.kr328.clash.design.model.DarkMode
 import com.github.kr328.clash.design.preference.*
+import com.github.kr328.clash.design.store.TelegramStore
 import com.github.kr328.clash.design.store.UiStore
 import com.github.kr328.clash.design.util.applyFrom
 import com.github.kr328.clash.design.util.bindAppBarElevation
@@ -37,6 +38,8 @@ class AppSettingsDesign(
         binding.activityBarLayout.applyFrom(context)
 
         binding.scrollRoot.bindAppBarElevation(binding.activityBarLayout)
+
+        val telegram = TelegramStore(context)
 
         val screen = preferenceScreen(context) {
             category(R.string.behavior)
@@ -98,8 +101,34 @@ class AppSettingsDesign(
             ) {
                 enabled = !running
             }
+
+            category(R.string.telegram)
+
+            tips(R.string.tg_settings_hint)
+
+            editableText(
+                value = telegram::botToken,
+                adapter = trimmedText,
+                title = R.string.bot_token,
+                icon = R.drawable.ic_baseline_key,
+                empty = R.string.not_set,
+                maskSummary = true,
+            )
+
+            editableText(
+                value = telegram::chatId,
+                adapter = trimmedText,
+                title = R.string.chat_id,
+                icon = R.drawable.ic_baseline_assignment,
+                empty = R.string.not_set,
+            )
         }
 
         binding.content.addView(screen.root)
     }
+}
+
+private val trimmedText = object : NullableTextAdapter<String> {
+    override fun from(value: String): String = value
+    override fun to(text: String?): String = text?.trim().orEmpty()
 }

@@ -3,6 +3,10 @@
     <include
         domain="sharedpref"
         path="." />
+    <!-- bot token stays on device -->
+    <exclude
+        domain="sharedpref"
+        path="telegram_upload.xml" />
     <include
         domain="database"
         path="." />

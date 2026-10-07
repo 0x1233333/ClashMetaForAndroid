@@ -28,6 +28,11 @@ class LogsDesign(context: Context) : Design<LogsDesign.Request>(context) {
         data class Share(val file: File) : Request()
     }
 
+    enum class ExportChoice {
+        Share,
+        Telegram,
+    }
+
     private val binding = DesignLogsBinding
         .inflate(context.layoutInflater, context.root, false)
     private val adapter = LogFileAdapter(context) {
@@ -83,6 +88,26 @@ class LogsDesign(context: Context) : Design<LogsDesign.Request>(context) {
                     .setNegativeButton(R.string.cancel) { _, _ -> }
                     .show()
                     .setOnDismissListener { if (!ctx.isCompleted) ctx.resume(false) }
+            }
+        }
+    }
+
+    suspend fun requestExportChoice(): ExportChoice? {
+        return withContext(Dispatchers.Main) {
+            suspendCancellableCoroutine { ctx ->
+                MaterialAlertDialogBuilder(context)
+                    .setTitle(R.string.export_diag)
+                    .setItems(
+                        arrayOf(
+                            context.getString(R.string.share_to_other_apps),
+                            context.getString(R.string.upload_to_telegram),
+                        )
+                    ) { _, which ->
+                        ctx.resume(if (which == 0) ExportChoice.Share else ExportChoice.Telegram)
+                    }
+                    .setNegativeButton(R.string.cancel) { _, _ -> }
+                    .show()
+                    .setOnDismissListener { if (!ctx.isCompleted) ctx.resume(null) }
             }
         }
     }

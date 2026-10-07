@@ -7,10 +7,14 @@ import com.github.kr328.clash.common.util.intent
 import com.github.kr328.clash.common.util.setFileName
 import com.github.kr328.clash.design.LogsDesign
 import com.github.kr328.clash.design.R
+import com.github.kr328.clash.design.dialog.withModelProgressBar
 import com.github.kr328.clash.design.model.LogFile
+import com.github.kr328.clash.design.store.TelegramStore
 import com.github.kr328.clash.design.ui.ToastDuration
 import com.github.kr328.clash.diag.DiagExporter
+import com.github.kr328.clash.diag.TelegramUploader
 import com.github.kr328.clash.util.logsDir
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.selects.select
@@ -64,15 +68,63 @@ class LogsActivity : BaseActivity<LogsDesign>() {
                                 withContext(Dispatchers.IO) {
                                     DiagExporter.buildBundle(this@LogsActivity)
                                 }
+                            } catch (e: CancellationException) {
+                                throw e
                             } catch (e: Exception) {
                                 design.showToast(R.string.share_failed, ToastDuration.Long)
                                 null
                             }
-                            if (zip != null) shareFile(design, zip)
+                            if (zip != null) {
+                                when (design.requestExportChoice()) {
+                                    LogsDesign.ExportChoice.Share -> shareFile(design, zip)
+                                    LogsDesign.ExportChoice.Telegram -> {
+                                        try {
+                                            uploadToTelegram(design, zip)
+                                        } catch (e: CancellationException) {
+                                            throw e
+                                        } catch (e: Exception) {
+                                            design.showToast(R.string.tg_upload_failed, ToastDuration.Long)
+                                            shareFile(design, zip)
+                                        }
+                                    }
+                                    null -> Unit
+                                }
+                            }
                         }
                     }
                 }
             }
+        }
+    }
+
+    private suspend fun uploadToTelegram(design: LogsDesign, zip: File) {
+        val store = TelegramStore(this)
+        val token = store.botToken.trim()
+        val chatId = store.chatId.trim()
+        if (token.isEmpty() || chatId.isEmpty()) {
+            design.showToast(R.string.tg_not_configured, ToastDuration.Long)
+            return
+        }
+        var result: Result<Unit>? = null
+        withModelProgressBar {
+            configure {
+                isIndeterminate = true
+                text = getString(R.string.tg_uploading)
+            }
+            result = withContext(Dispatchers.IO) {
+                TelegramUploader.upload(this@LogsActivity, zip, token, chatId)
+            }
+        }
+        val upload = result ?: Result.failure(IllegalStateException("upload"))
+        if (upload.isSuccess) {
+            design.showToast(R.string.tg_upload_ok, ToastDuration.Short)
+        } else {
+            val reason = upload.exceptionOrNull()?.message?.take(180) ?: "error"
+            design.showToast(
+                getString(R.string.tg_upload_failed) + ": " + reason,
+                ToastDuration.Long,
+            )
+            shareFile(design, zip)
         }
     }
 
