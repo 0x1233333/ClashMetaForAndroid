@@ -13,6 +13,7 @@ import com.github.kr328.clash.diag.AutoUploader
 import com.github.kr328.clash.diag.DiagExporter
 import com.github.kr328.clash.diag.ExtraFiles
 import com.github.kr328.clash.diag.KernelCapture
+import com.github.kr328.clash.diag.TelegramUploader
 import com.github.kr328.clash.service.store.ServiceStore
 import com.github.kr328.clash.util.ApplicationObserver
 import kotlinx.coroutines.CancellationException
@@ -83,29 +84,77 @@ class AppSettingsActivity : BaseActivity<AppSettingsDesign>(), Behavior {
                                 design.showTextPage(R.string.preview_upload, text)
                             }
                         }
+                        AppSettingsDesign.Request.TestConnection -> {
+                            var outcome: kotlin.Result<String> =
+                                kotlin.Result.failure(IllegalStateException("no result"))
+                            try {
+                                withModelProgressBar {
+                                    configure {
+                                        isIndeterminate = true
+                                        text = getString(R.string.tg_testing)
+                                    }
+                                    outcome = withContext(Dispatchers.IO) {
+                                        val tgStore =
+                                            com.github.kr328.clash.design.store.TelegramStore(this@AppSettingsActivity)
+                                        TelegramUploader.test(
+                                            this@AppSettingsActivity,
+                                            tgStore.botToken,
+                                            tgStore.chatId,
+                                        )
+                                    }
+                                }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                outcome = kotlin.Result.failure<String>(e)
+                            }
+                            if (outcome.isSuccess) {
+                                design.showToast(
+                                    getString(R.string.tg_test_ok, outcome.getOrNull().orEmpty()),
+                                    ToastDuration.Short,
+                                )
+                            } else {
+                                val reason = outcome.exceptionOrNull()?.message ?: "error"
+                                design.showToast(
+                                    getString(R.string.tg_test_failed) + ": " +
+                                        com.github.kr328.clash.design.explainUploadError(
+                                            this@AppSettingsActivity,
+                                            reason,
+                                        ),
+                                    ToastDuration.Long,
+                                )
+                            }
+                        }
+
                         AppSettingsDesign.Request.UploadNow -> {
-                            val outcome = try {
+                            var outcome: AutoUploader.Outcome =
+                                AutoUploader.Outcome.Failed("no result")
+                            try {
                                 withModelProgressBar {
                                     configure {
                                         isIndeterminate = true
                                         text = getString(R.string.tg_uploading)
                                     }
-                                    withContext(Dispatchers.IO) {
+                                    outcome = withContext(Dispatchers.IO) {
                                         AutoUploader.uploadNow(this@AppSettingsActivity)
                                     }
                                 }
                             } catch (e: CancellationException) {
                                 throw e
                             } catch (e: Exception) {
-                                AutoUploader.Outcome.Failed(e.message ?: e.javaClass.simpleName)
+                                outcome = AutoUploader.Outcome.Failed(e.message ?: e.javaClass.simpleName)
                             }
                             design.patchUploadStatus()
-                            when (outcome) {
+                            when (val res = outcome) {
                                 is AutoUploader.Outcome.Uploaded ->
                                     design.showToast(R.string.tg_upload_ok, ToastDuration.Short)
                                 is AutoUploader.Outcome.Failed ->
                                     design.showToast(
-                                        getString(R.string.tg_upload_failed) + ": " + outcome.reason,
+                                        getString(R.string.tg_upload_failed) + ": " +
+                                            com.github.kr328.clash.design.explainUploadError(
+                                                this@AppSettingsActivity,
+                                                res.reason,
+                                            ),
                                         ToastDuration.Long,
                                     )
                                 AutoUploader.Outcome.NotConfigured ->

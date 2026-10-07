@@ -34,6 +34,7 @@ class AppSettingsDesign(
     enum class Request {
         ReCreateAllActivities,
         UploadNow,
+        TestConnection,
         PreviewUpload,
         StartKernelLog,
         PickExtraFiles,
@@ -306,6 +307,17 @@ class AppSettingsDesign(
             }
             extraViews.add(nowPref.view)
 
+            val testPref = clickable(
+                title = R.string.test_connection,
+                summary = R.string.test_connection_summary,
+                icon = R.drawable.ic_baseline_send,
+            ) {
+                clicked {
+                    requests.trySend(Request.TestConnection)
+                }
+            }
+            extraViews.add(testPref.view)
+
             showTelegramExtras(telegram.botToken.trim().isNotEmpty())
         }
 
@@ -316,6 +328,32 @@ class AppSettingsDesign(
 private val trimmedText = object : NullableTextAdapter<String> {
     override fun from(value: String): String = value
     override fun to(text: String?): String = text?.trim().orEmpty()
+}
+
+/**
+ * 把上传/测试失败的原因翻译成人话(中英随系统)。上传器给的原文形如
+ * `http=400 Bad Request: chat not found` 或 `连接异常: timeout`,这里按关键特征归类。
+ */
+fun explainUploadError(context: Context, raw: String): String {
+    val t = raw.lowercase(Locale.ROOT)
+    return when {
+        t.contains("not configured") -> context.getString(R.string.explain_not_configured)
+        t.contains("bad token") -> context.getString(R.string.explain_bad_token)
+        t.contains("bad chat") -> context.getString(R.string.explain_bad_chat)
+        t.contains("401") || t.contains("unauthorized") -> context.getString(R.string.explain_unauthorized)
+        t.contains("chat not found") || t.contains("chat_id is empty") ->
+            context.getString(R.string.explain_chat_not_found)
+        t.contains("403") || t.contains("can't initiate") || t.contains("cant initiate") ||
+            t.contains("bot was blocked") || t.contains("user is deactivated") ->
+            context.getString(R.string.explain_forbidden)
+        t.contains("413") || t.contains("too big") || t.contains("too large") ->
+            context.getString(R.string.explain_too_big)
+        t.contains("timeout") || t.contains("timed out") || t.contains("unreachable") ||
+            t.contains("unknownhost") || t.contains("connect") || t.contains("network") ||
+            t.contains("socket") || t.contains("eof") ->
+            context.getString(R.string.explain_network)
+        else -> context.getString(R.string.explain_other, raw.take(80))
+    }
 }
 
 private fun formatUploadStatus(context: Context, store: TelegramStore): String {
@@ -342,7 +380,7 @@ private fun formatUploadStatus(context: Context, store: TelegramStore): String {
             )
         }
         if (err.isNotEmpty()) {
-            parts.add(context.getString(R.string.last_upload_failed, err.take(120)))
+            parts.add(context.getString(R.string.last_upload_failed, explainUploadError(context, err)))
         }
     }
     if (store.autoUpload) {

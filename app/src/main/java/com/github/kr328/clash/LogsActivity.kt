@@ -153,7 +153,7 @@ class LogsActivity : BaseActivity<LogsDesign>() {
         } else {
             val reason = upload.exceptionOrNull()?.message?.take(180) ?: "error"
             design.showToast(
-                getString(R.string.tg_upload_failed) + ": " + reason,
+                getString(R.string.tg_upload_failed) + ": " + com.github.kr328.clash.design.explainUploadError(this, reason),
                 ToastDuration.Long,
             )
             shareFile(design, zip)

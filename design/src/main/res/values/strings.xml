@@ -427,4 +427,18 @@
     <string name="shortcut_start_long">Start Clash service</string>
     <string name="shortcut_stop_short">Stop Clash</string>
     <string name="shortcut_stop_long">Stop Clash service</string>
+    <string name="test_connection">Test connection</string>
+    <string name="test_connection_summary">Checks the bot token and the chat in turn</string>
+    <string name="tg_test_ok">Connection ok, bot: @%1$s</string>
+    <string name="tg_test_failed">Connection test failed</string>
+    <string name="explain_not_configured">Bot token or chat id is not set yet</string>
+    <string name="explain_bad_token">The bot token has an unexpected format</string>
+    <string name="explain_bad_chat">Unexpected chat id format (a number, or a public channel name starting with @)</string>
+    <string name="explain_unauthorized">The bot token is not valid (re-enter it if it was revoked in BotFather)</string>
+    <string name="explain_chat_not_found">Chat not found, or this bot has never received a message from you - send /start to the bot in Telegram first</string>
+    <string name="explain_forbidden">The bot cannot message you yet - send it a message in Telegram first</string>
+    <string name="explain_network">Network unreachable: the proxy is off and a direct connection to Telegram failed</string>
+    <string name="explain_too_big">The file is too large for Telegram</string>
+    <string name="explain_other">Other error: %1$s</string>
+    <string name="tg_testing">Testing the connection…</string>
 </resources>

@@ -64,3 +64,4 @@ google-services.json
 
 # MacOS
 .DS_Store
+.kotlin/

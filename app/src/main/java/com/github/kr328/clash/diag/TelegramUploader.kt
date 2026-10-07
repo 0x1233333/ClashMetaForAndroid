@@ -48,6 +48,80 @@ object TelegramUploader {
         return first
     }
 
+    /**
+     * 连接自测:先 getMe 验身份,再 sendMessage 验会话。返回 bot 用户名;
+     * 失败时异常消息与上传一致(http=… / 异常名: 详情),交给界面翻译成人话。
+     */
+    fun test(context: Context, token: String, chatId: String): Result<String> {
+        val cleanToken = token.trim()
+        val cleanChat = chatId.trim()
+        if (cleanToken.isEmpty() || cleanChat.isEmpty()) {
+            return Result.failure(IllegalArgumentException("not configured"))
+        }
+        if (!tokenOk(cleanToken)) return Result.failure(IllegalArgumentException("bad token"))
+        if (!chatOk(cleanChat)) return Result.failure(IllegalArgumentException("bad chat id"))
+        val viaProxy = proxyReachable()
+        if (viaProxy) {
+            Log.i("test via Proxy $PROXY_HOST:$PROXY_PORT bot<REDACTED>")
+        } else {
+            Log.i("$PROXY_HOST:$PROXY_PORT unreachable, direct test bot<REDACTED>")
+        }
+        val me = postForm(cleanToken, viaProxy, "getMe", null)
+        if (me.isFailure) return Result.failure<String>(me.exceptionOrNull() ?: IOException("getMe"))
+        val username = try {
+            JSONObject(me.getOrThrow()).optJSONObject("result")?.optString("username").orEmpty()
+        } catch (e: Exception) {
+            ""
+        }
+        val text = "Clash Smart 连接测试 / connection test"
+        val sent = postForm(
+            cleanToken,
+            viaProxy,
+            "sendMessage",
+            "chat_id=" + java.net.URLEncoder.encode(cleanChat, "UTF-8") +
+                "&text=" + java.net.URLEncoder.encode(text, "UTF-8"),
+        )
+        if (sent.isFailure) return Result.failure<String>(sent.exceptionOrNull() ?: IOException("sendMessage"))
+        Log.i("test ok bot<REDACTED>")
+        return Result.success(username)
+    }
+
+    private fun postForm(token: String, viaProxy: Boolean, method: String, form: String?): Result<String> {
+        return try {
+            val url = URL("https://api.telegram.org/bot$token/$method")
+            val conn = if (viaProxy) {
+                url.openConnection(Proxy(Proxy.Type.HTTP, InetSocketAddress(PROXY_HOST, PROXY_PORT)))
+            } else {
+                url.openConnection()
+            } as HttpURLConnection
+            try {
+                conn.requestMethod = "POST"
+                conn.connectTimeout = CONNECT_TIMEOUT_MS
+                conn.readTimeout = READ_TIMEOUT_MS
+                conn.doOutput = true
+                if (form == null) {
+                    conn.outputStream.use { it.write(ByteArray(0)) }
+                } else {
+                    conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+                    conn.outputStream.use { it.write(form.toByteArray(Charsets.UTF_8)) }
+                }
+                val code = conn.responseCode
+                val body = readLimited(if (code in 200..299) conn.inputStream else conn.errorStream)
+                if (code in 200..299 && jsonOk(body)) {
+                    Result.success(body)
+                } else {
+                    val message = httpFailure(code, body, token)
+                    Log.w("$method failed bot<REDACTED> $message")
+                    Result.failure(IOException(message))
+                }
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: Exception) {
+            failureOf(e, token)
+        }
+    }
+
     private fun reject(context: Context, zip: File, token: String, chatId: String): String? {
         if (token.isEmpty() || chatId.isEmpty()) return "not configured"
         if (!tokenOk(token)) return "bad token"
@@ -203,7 +277,7 @@ object TelegramUploader {
         return if (detail.isBlank()) "http=$code" else "http=$code $detail"
     }
 
-    private fun failureOf(error: Exception, token: String): Result<Unit> {
+    private fun <T> failureOf(error: Exception, token: String): Result<T> {
         val detail = redact(error.message, token).take(180)
         val message = if (detail.isBlank()) {
             error.javaClass.simpleName
