@@ -108,13 +108,21 @@ class AppSettingsActivity : BaseActivity<AppSettingsDesign>(), Behavior {
                             } catch (e: Exception) {
                                 outcome = kotlin.Result.failure<String>(e)
                             }
+                            val tgStore2 =
+                                com.github.kr328.clash.design.store.TelegramStore(this@AppSettingsActivity)
                             if (outcome.isSuccess) {
+                                tgStore2.lastTestAt = System.currentTimeMillis()
+                                tgStore2.lastTestResult = "ok:" + outcome.getOrNull().orEmpty()
+                                design.patchUploadStatus()
                                 design.showToast(
                                     getString(R.string.tg_test_ok, outcome.getOrNull().orEmpty()),
                                     ToastDuration.Short,
                                 )
                             } else {
                                 val reason = outcome.exceptionOrNull()?.message ?: "error"
+                                tgStore2.lastTestAt = System.currentTimeMillis()
+                                tgStore2.lastTestResult = reason
+                                design.patchUploadStatus()
                                 design.showToast(
                                     getString(R.string.tg_test_failed) + ": " +
                                         com.github.kr328.clash.design.explainUploadError(

@@ -150,7 +150,8 @@ object DiagExporter {
         val routingRaw = if (store.selRouting) readWhole(File(diagDir, "routing.jsonl")) else null
         val weightsRaw = if (store.selRouting) readWhole(File(diagDir, "weights.jsonl")) else null
         val crashesRaw = if (store.selCrashes) readFile(File(diagDir, "crashes.jsonl")) else null
-        val extras = if (store.selExtra) readExtraDecoded(File(diagDir, "extra")) else emptyList()
+        // 只上传本程序自己产生的数据；不再收「用户指定的其他文件」(界面已移除该入口)
+        val extras = emptyList<ExtraFile>()
         val kernelRaw = if (store.selKernelLog) readLatestKernel(context) else null
 
         val nodeNames = LinkedHashSet<String>()

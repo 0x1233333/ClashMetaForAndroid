@@ -22,8 +22,8 @@ object TelegramUploader {
     private const val PROXY_HOST = "127.0.0.1"
     private const val PROXY_PORT = 7892
     private const val PROXY_PROBE_MS = 2_000
-    private const val CONNECT_TIMEOUT_MS = 15_000
-    private const val READ_TIMEOUT_MS = 60_000
+    private const val CONNECT_TIMEOUT_MS = 8_000
+    private const val READ_TIMEOUT_MS = 20_000
     private const val BODY_LIMIT = 65_536
 
     fun upload(context: Context, zip: File, token: String, chatId: String): Result<Unit> {

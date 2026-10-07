@@ -93,6 +93,16 @@ class TelegramStore(context: Context) {
         defaultValue = "",
     )
 
+    var lastTestAt: Long by store.long(
+        key = "last_test_at",
+        defaultValue = 0L,
+    )
+
+    var lastTestResult: String by store.string(
+        key = "last_test_result",
+        defaultValue = "",
+    )
+
     var lastAttemptAt: Long by store.long(
         key = "last_attempt_at",
         defaultValue = 0L,

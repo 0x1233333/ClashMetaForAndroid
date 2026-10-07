@@ -61,13 +61,18 @@ class AppSettingsDesign(
         .inflate(context.layoutInflater, context.root, false)
     private val telegram = TelegramStore(context)
     private lateinit var lastUploadPref: ClickablePreference
+    private lateinit var testPref: ClickablePreference
 
     override val root: View
         get() = binding.root
 
     fun patchUploadStatus() {
-        if (!::lastUploadPref.isInitialized) return
-        lastUploadPref.summary = formatUploadStatus(context, telegram)
+        if (::lastUploadPref.isInitialized) {
+            lastUploadPref.summary = formatUploadStatus(context, telegram)
+        }
+        if (::testPref.isInitialized) {
+            testPref.summary = formatTestStatus(context, telegram)
+        }
     }
 
     init {
@@ -215,23 +220,6 @@ class AppSettingsDesign(
                 summary = R.string.sel_crashes_summary,
             )
 
-            switch(
-                value = telegram::selExtra,
-                icon = R.drawable.ic_baseline_publish,
-                title = R.string.sel_extra,
-                summary = R.string.sel_extra_summary,
-            )
-
-            clickable(
-                title = R.string.pick_extra_files,
-                summary = R.string.pick_extra_files_summary,
-                icon = R.drawable.ic_baseline_attach_file,
-            ) {
-                clicked {
-                    requests.trySend(Request.PickExtraFiles)
-                }
-            }
-
             clickable(
                 title = R.string.preview_upload,
                 icon = R.drawable.ic_baseline_info,
@@ -307,7 +295,7 @@ class AppSettingsDesign(
             }
             extraViews.add(nowPref.view)
 
-            val testPref = clickable(
+            testPref = clickable(
                 title = R.string.test_connection,
                 summary = R.string.test_connection_summary,
                 icon = R.drawable.ic_baseline_send,
@@ -353,6 +341,17 @@ fun explainUploadError(context: Context, raw: String): String {
             t.contains("socket") || t.contains("eof") ->
             context.getString(R.string.explain_network)
         else -> context.getString(R.string.explain_other, raw.take(80))
+    }
+}
+
+private fun formatTestStatus(context: Context, store: TelegramStore): String {
+    val at = store.lastTestAt
+    val res = store.lastTestResult
+    if (at <= 0L || res.isEmpty()) return context.getString(R.string.test_connection_summary)
+    return if (res.startsWith("ok:")) {
+        context.getString(R.string.tg_test_ok, res.removePrefix("ok:"))
+    } else {
+        context.getString(R.string.tg_test_failed) + ": " + explainUploadError(context, res)
     }
 }
 
