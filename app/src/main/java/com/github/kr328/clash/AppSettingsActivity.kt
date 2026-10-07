@@ -21,6 +21,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 
 class AppSettingsActivity : BaseActivity<AppSettingsDesign>(), Behavior {
     override suspend fun main() {
@@ -144,7 +145,9 @@ class AppSettingsActivity : BaseActivity<AppSettingsDesign>(), Behavior {
                                         text = getString(R.string.tg_uploading)
                                     }
                                     outcome = withContext(Dispatchers.IO) {
-                                        AutoUploader.uploadNow(this@AppSettingsActivity)
+                                        withTimeout(150_000) {
+                                            AutoUploader.uploadNow(this@AppSettingsActivity)
+                                        }
                                     }
                                 }
                             } catch (e: CancellationException) {

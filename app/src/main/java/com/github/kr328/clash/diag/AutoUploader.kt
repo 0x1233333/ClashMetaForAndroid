@@ -9,6 +9,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.runBlocking
 
 /**
  * 定期/卡顿自动上传诊断包。由 SmartHealthModule 的 10/30 分钟 tick 询问「是否到点」，
@@ -16,6 +18,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Bot Token 为空时立即返回，不会发任何网络请求。
  */
 object AutoUploader {
+    private const val UPLOAD_TIMEOUT_MS = 120_000L
+
     private const val MAX_ZIP_BYTES = 8L * 1024L * 1024L
     private const val STALL_THROTTLE_MS = 30L * 60L * 1000L
     private const val auto_upload = "auto_upload"
@@ -93,7 +97,18 @@ object AutoUploader {
             if (force || stallNow) store.lastStallAttemptAt = now
 
             Log.i("auto sendDocument bot<REDACTED> redact=true size=${zip.length()}")
-            val result = TelegramUploader.upload(context, zip, token, chatId)
+            val result = try {
+                // 该函数是阻塞式调用,用 runBlocking 包住超时;整体封顶后可杜绝无限转圈
+                kotlinx.coroutines.runBlocking {
+                    withTimeout(UPLOAD_TIMEOUT_MS) {
+                        TelegramUploader.upload(context, zip, token, chatId)
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
             return if (result.isSuccess) {
                 store.lastUploadAt = System.currentTimeMillis()
                 store.lastUploadBytes = zip.length()

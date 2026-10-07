@@ -31,18 +31,21 @@ import java.util.zip.ZipOutputStream
  */
 object DiagExporter {
     private const val MAX_BUNDLE_BYTES = 8 * 1024 * 1024
+    private const val ROUTING_TAIL_BYTES = 2 * 1024 * 1024
+    private const val WEIGHTS_TAIL_BYTES = 512 * 1024
     private const val CONTROLLER_VERSION = "http://127.0.0.1:9090/version"
     private const val HTTP_TIMEOUT_MS = 1500
     private val LOG_NAME = Regex("clash-(\\d+)\\.log")
     private val NODE_FIELD = Regex(""""node"\s*:\s*"((?:\\.|[^"\\])*)"""")
     private val YAML_NAME = Regex("""(?m)^\s*-?\s*name\s*:\s*(.+?)\s*$""")
     private val HOSTLIKE =
-        Regex("""\b[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+\b""")
+        Regex("""\b[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?+(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?+)+\b""")
     private val NAME_STOPLIST = setOf(
         "DIRECT", "REJECT", "PROXY", "GLOBAL", "FINAL", "PASS", "COMPATIBLE",
         "select", "url-test", "fallback", "load-balance", "relay", "direct",
     )
-    private val JSON_STRING = Regex(""""((?:\\.|[^"\\])*)"""")
+    // 占有量词 *+ :语义等价(找到一个闭合引号为止),但不会在超长/未闭合字符串上指数回溯
+    private val JSON_STRING = Regex(""""((?:\\.|[^"\\])*+)"""")
     private val SCHEMA_KEYS = setOf(
         "ts", "type", "groups", "node", "weight", "delay", "alive",
         "conn_id", "target_class", "net", "inbound",
@@ -147,8 +150,9 @@ object DiagExporter {
     private fun collect(context: Context, redact: Boolean): List<Part> {
         val store = TelegramStore(context)
         val diagDir = File(context.filesDir, "diag")
-        val routingRaw = if (store.selRouting) readWhole(File(diagDir, "routing.jsonl")) else null
-        val weightsRaw = if (store.selRouting) readWhole(File(diagDir, "weights.jsonl")) else null
+        // 只取尾部若干字节:分析用不到几十 MB 的历史,却会让脱敏与压缩白白烧 CPU
+        val routingRaw = if (store.selRouting) readTail(File(diagDir, "routing.jsonl"), ROUTING_TAIL_BYTES) else null
+        val weightsRaw = if (store.selRouting) readTail(File(diagDir, "weights.jsonl"), WEIGHTS_TAIL_BYTES) else null
         val crashesRaw = if (store.selCrashes) readFile(File(diagDir, "crashes.jsonl")) else null
         // 只上传本程序自己产生的数据；不再收「用户指定的其他文件」(界面已移除该入口)
         val extras = emptyList<ExtraFile>()
@@ -539,7 +543,13 @@ object DiagExporter {
                 if (n < 0) break
                 off += n
             }
-            return if (off == maxBytes) buf else buf.copyOf(off)
+            val raw = if (off == maxBytes) buf else buf.copyOf(off)
+            // 从文件中间截断时,首段可能是半行 —— 丢弃它,避免出现未闭合的 JSON 片段
+            val nl = raw.indexOf('\n'.code.toByte())
+            if (nl in 0 until raw.size - 1) {
+                return raw.copyOfRange(nl + 1, raw.size)
+            }
+            return raw
         }
     }
 
@@ -656,7 +666,7 @@ object DiagExporter {
                 var off = 0
                 while (off < buf.size) {
                     val n = input.read(buf, off, buf.size - off)
-                    if (n < 0) break
+                    if (n <= 0) break
                     off += n
                 }
                 String(buf, 0, off, Charsets.UTF_8)
@@ -763,9 +773,13 @@ object DiagExporter {
         val body = dropMetaLine(jsonl)
         if (!body.contains("\"node\"")) return emptySet()
         val names = LinkedHashSet<String>()
-        for (match in NODE_FIELD.findAll(body)) {
-            val name = unescapeJson(match.groupValues[1])
-            if (name.isNotEmpty()) names.add(name)
+        // 同样按行扫描,避免在大文本上反复复制输入
+        for (line in body.split('\n')) {
+            if (line.isEmpty() || !line.contains("\"node\"")) continue
+            for (match in NODE_FIELD.findAll(line)) {
+                val name = unescapeJson(match.groupValues[1])
+                if (name.isNotEmpty()) names.add(name)
+            }
         }
         return names
     }
@@ -788,10 +802,18 @@ object DiagExporter {
 
     private fun scrubBody(jsonl: String, names: Set<String>): String {
         if (jsonl.isEmpty() || names.isEmpty()) return jsonl
-        return JSON_STRING.replace(jsonl) { match ->
+        // 按行处理:JSONL 一行一条记录。在整块几 MB 文本上跑正则会因
+        // 每个匹配都重建 Matcher 并复制整个输入,导致 O(n^2) 的 CPU 消耗。
+        return jsonl.split('\n').joinToString("\n") { line ->
+            if (line.isEmpty()) line else scrubLine(line, names)
+        }
+    }
+
+    private fun scrubLine(line: String, names: Set<String>): String {
+        return JSON_STRING.replace(line) { match ->
             val decoded = unescapeJson(match.groupValues[1])
             if (decoded.isEmpty() || decoded !in names) return@replace match.value
-            if (decoded in SCHEMA_KEYS && isJsonKey(jsonl, match.range.last)) return@replace match.value
+            if (decoded in SCHEMA_KEYS && isJsonKey(line, match.range.last)) return@replace match.value
             "\"${nodeToken(decoded)}\""
         }
     }

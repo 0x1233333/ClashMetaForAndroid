@@ -296,7 +296,8 @@ object TelegramUploader {
             var total = 0
             while (total < BODY_LIMIT) {
                 val n = input.read(buf, 0, minOf(buf.size, BODY_LIMIT - total))
-                if (n < 0) break
+                // 注意:网络流允许返回 0(≠ -1);若只判断 <0 会变成 100% CPU 的空转
+                if (n <= 0) break
                 out.write(buf, 0, n)
                 total += n
             }

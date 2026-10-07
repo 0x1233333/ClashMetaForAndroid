@@ -19,6 +19,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.io.File
 
 class LogsActivity : BaseActivity<LogsDesign>() {
@@ -139,7 +140,15 @@ class LogsActivity : BaseActivity<LogsDesign>() {
                 text = getString(R.string.tg_uploading)
             }
             result = withContext(Dispatchers.IO) {
-                TelegramUploader.upload(this@LogsActivity, zip, token, chatId)
+                try {
+                    withTimeout(120_000) {
+                        TelegramUploader.upload(this@LogsActivity, zip, token, chatId)
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Result.failure(e)
+                }
             }
         }
         val upload = result ?: Result.failure(IllegalStateException("upload"))
