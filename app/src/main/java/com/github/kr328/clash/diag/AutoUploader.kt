@@ -37,6 +37,7 @@ object AutoUploader {
         object SkippedEmpty : Outcome()
         object SkippedTunnel : Outcome()
         object Busy : Outcome()
+        object SkippedConditions : Outcome()
         object NotDue : Outcome()
     }
 
@@ -79,9 +80,15 @@ object AutoUploader {
 
         if (DiagExporter.sourcePayloadBytes(context) <= 0L) return Outcome.SkippedEmpty
         if (!busy.compareAndSet(false, true)) return Outcome.Busy
+            // 省电靠"择时":自动上传仅在充电或非计费网络(WiFi)时进行;手动触发(force)不受限
+            if (!force && !conditionsOk(context)) {
+                store.lastUploadError = "waiting for charging or wifi"
+                busy.set(false)
+                return Outcome.SkippedConditions
+            }
         try {
             val packed = try {
-                DiagExporter.pack(context, redact = true)
+                DiagExporter.packChunk(context, redact = true)
             } catch (e: Exception) {
                 val reason = e.message?.take(180) ?: e.javaClass.simpleName
                 store.lastUploadError = reason
@@ -110,6 +117,8 @@ object AutoUploader {
                 Result.failure(e)
             }
             return if (result.isSuccess) {
+                DiagExporter.commitCursor(context, packed)
+                zip.delete() // 上传成功即删,本地不留残留物
                 store.lastUploadAt = System.currentTimeMillis()
                 store.lastUploadBytes = zip.length()
                 store.lastUploadError = ""
@@ -144,4 +153,20 @@ object AutoUploader {
             false
         }
     }
+    /** 充电中 或 接在非计费网络(WiFi/以太网)上 —— 二者满足其一即可自动上传。 */
+    private fun conditionsOk(context: Context): Boolean {
+        return try {
+            val battery = context.registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
+            val status = battery?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1) ?: -1
+            val charging = status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
+                status == android.os.BatteryManager.BATTERY_STATUS_FULL
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+            val caps = cm?.getNetworkCapabilities(cm.activeNetwork)
+            val unmetered = caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED) == true
+            charging || unmetered
+        } catch (e: Exception) {
+            true // 判断不了时不要卡住上传
+        }
+    }
+
 }

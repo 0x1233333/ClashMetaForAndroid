@@ -60,6 +60,93 @@ object DiagExporter {
 
     data class Packed(val file: File, val items: String)
 
+    /** 分块结果:压缩包 + 各项 + 本轮各文件的区间(供接收端去重/排序)+ 原始字节数。 */
+    data class Chunk(
+        val file: File,
+        val items: String,
+        val ranges: Map<String, Long>,
+        val rawBytes: Long,
+    )
+
+    /**
+     * 按游标打包:每个文件只取 [游标, 游标+CHUNK) 的一段。
+     * **上传成功后才推进游标** —— 因此本地保留全量、上传零丢失、失败可续传。
+     */
+    fun packChunk(context: Context, redact: Boolean = true): Chunk {
+        val store = TelegramStore(context)
+        val cursor = UploadCursor.read(context)
+        val next = LinkedHashMap<String, Long>(cursor)
+
+        val wanted = ArrayList<Pair<String, String>>()
+        if (store.selRouting) {
+            wanted.add("routing.jsonl" to DiagJson.ROUTING_META)
+            wanted.add("weights.jsonl" to DiagJson.WEIGHTS_META)
+        }
+        if (store.selCrashes) wanted.add("crashes.jsonl" to DiagJson.CRASHES_META)
+
+        val picked = LinkedHashMap<String, ByteArray>()
+        var budget = UploadCursor.CHUNK_BYTES
+        var rawTotal = 0L
+        for ((name, _) in wanted) {
+            val from = cursor[name] ?: 0L
+            if (budget <= 0L || UploadCursor.size(context, name) <= from) continue
+            val (bytes, end) = UploadCursor.readRange(context, name, from, budget)
+            next[name] = end
+            if (bytes.isEmpty()) continue
+            picked[name] = bytes
+            rawTotal += bytes.size
+            budget -= bytes.size
+        }
+
+        // 名字清单:配置 + 持久化 + 本轮数据(全部运行时读取,代码里无具体名字)
+        val nodeNames = LinkedHashSet<String>()
+        if (redact) {
+            val persisted = persistedNames(File(context.filesDir, "diag"))
+            nodeNames.addAll(configNodeNames(context))
+            nodeNames.addAll(persisted)
+            for ((_, _b) in picked) nodeNames.addAll(collectNodeNames(String(_b, Charsets.UTF_8)))
+        }
+        if (redact && nodeNames.size > 0) savePersistedNames(File(context.filesDir, "diag"), nodeNames)
+
+        // 再走一遍:套用脱敏(按行处理),并补上 _meta 行
+        val finalParts = ArrayList<Part>()
+        for ((name, meta) in wanted) {
+            val bytes = picked[name] ?: continue
+            var text = String(bytes, Charsets.UTF_8)
+            if (redact) text = scrubNames(text, nodeNames)
+            val withMeta = ensureMeta(text, meta)
+            finalParts.add(Part(name, withMeta.toByteArray(Charsets.UTF_8), name.substringBefore('.'), redacted = redact))
+        }
+        // 区间元数据 + 环境信息
+        val ranges = buildString {
+            append("{\"ranges\":{")
+            var first = true
+            for ((name, _) in wanted) {
+                if (!first) append(',')
+                first = false
+                append('"').append(name).append("\":").append(next[name] ?: 0L)
+            }
+            append("},\"chunk_bytes\":").append(rawTotal).append('}')
+        }
+        finalParts.add(Part("ranges.json", ranges.toByteArray(Charsets.UTF_8), "env", redacted = redact))
+        var env = buildEnv(context)
+        if (redact) env = scrubNames(env, nodeNames)
+        finalParts.add(Part("env.json", env.toByteArray(Charsets.UTF_8), "env", redacted = redact))
+
+        val zip = writeZip(context, finalParts)
+        return Chunk(zip, itemCsv(finalParts), next, rawTotal)
+    }
+
+    /** 上传成功后推进游标(游标只增不减)。 */
+    fun commitCursor(context: Context, chunk: Chunk) {
+        val cursor = UploadCursor.read(context)
+        for ((k, v) in chunk.ranges) {
+            val old = cursor[k] ?: 0L
+            if (v > old) cursor[k] = v
+        }
+        UploadCursor.write(context, cursor)
+    }
+
     private data class Part(
         val name: String,
         val bytes: ByteArray,

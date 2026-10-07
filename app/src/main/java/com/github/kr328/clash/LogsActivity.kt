@@ -79,13 +79,26 @@ class LogsActivity : BaseActivity<LogsDesign>() {
                                 when (design.requestExportChoice()) {
                                     LogsDesign.ExportChoice.Share -> shareFile(design, packed.file)
                                     LogsDesign.ExportChoice.Telegram -> {
-                                        try {
-                                            uploadToTelegram(design, packed.file, packed.items)
+                                        // 走直传时改用游标分块(增量、可续传),并把刚才那份普通导出删掉,避免残留
+                                        val chunk = try {
+                                            withContext(Dispatchers.IO) {
+                                                DiagExporter.packChunk(this@LogsActivity, redact = true)
+                                            }
                                         } catch (e: CancellationException) {
                                             throw e
                                         } catch (e: Exception) {
-                                            design.showToast(R.string.tg_upload_failed, ToastDuration.Long)
-                                            shareFile(design, packed.file)
+                                            null
+                                        }
+                                        packed.file.delete()
+                                        if (chunk != null) {
+                                            try {
+                                                uploadToTelegram(design, chunk)
+                                            } catch (e: CancellationException) {
+                                                throw e
+                                            } catch (e: Exception) {
+                                                design.showToast(R.string.tg_upload_failed, ToastDuration.Long)
+                                                shareFile(design, chunk.file)
+                                            }
                                         }
                                     }
                                     null -> Unit
@@ -99,7 +112,7 @@ class LogsActivity : BaseActivity<LogsDesign>() {
                             } else {
                                 val packed = try {
                                     withContext(Dispatchers.IO) {
-                                        DiagExporter.pack(this@LogsActivity, redact = true)
+                                        DiagExporter.packChunk(this@LogsActivity, redact = true)
                                     }
                                 } catch (e: CancellationException) {
                                     throw e
@@ -109,7 +122,7 @@ class LogsActivity : BaseActivity<LogsDesign>() {
                                 }
                                 if (packed != null) {
                                     try {
-                                        uploadToTelegram(design, packed.file, packed.items)
+                                        uploadToTelegram(design, packed)
                                     } catch (e: CancellationException) {
                                         throw e
                                     } catch (e: Exception) {
@@ -125,7 +138,9 @@ class LogsActivity : BaseActivity<LogsDesign>() {
         }
     }
 
-    private suspend fun uploadToTelegram(design: LogsDesign, zip: File, items: String) {
+    private suspend fun uploadToTelegram(design: LogsDesign, chunk: DiagExporter.Chunk) {
+        val zip = chunk.file
+        val items = chunk.items
         val store = TelegramStore(this)
         val token = store.botToken.trim()
         val chatId = store.chatId.trim()
@@ -153,6 +168,8 @@ class LogsActivity : BaseActivity<LogsDesign>() {
         }
         val upload = result ?: Result.failure(IllegalStateException("upload"))
         if (upload.isSuccess) {
+            DiagExporter.commitCursor(this@LogsActivity, chunk)
+            zip.delete() // 上传成功即删,本地不留残留物
             store.lastUploadAt = System.currentTimeMillis()
             store.lastUploadBytes = zip.length()
             store.lastUploadError = ""

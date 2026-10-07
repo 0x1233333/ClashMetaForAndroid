@@ -174,6 +174,8 @@ class AppSettingsActivity : BaseActivity<AppSettingsDesign>(), Behavior {
                                     design.showToast(R.string.tg_upload_skipped_empty, ToastDuration.Long)
                                 AutoUploader.Outcome.SkippedTunnel ->
                                     design.showToast(R.string.tg_upload_skipped_tunnel, ToastDuration.Long)
+                                AutoUploader.Outcome.SkippedConditions ->
+                                    design.showToast(R.string.tg_wait_conditions, ToastDuration.Long)
                                 AutoUploader.Outcome.Busy ->
                                     design.showToast(R.string.tg_uploading, ToastDuration.Short)
                                 AutoUploader.Outcome.NotDue ->

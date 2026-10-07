@@ -441,4 +441,5 @@
     <string name="explain_too_big">The file is too large for Telegram</string>
     <string name="explain_other">Other error: %1$s</string>
     <string name="tg_testing">Testing the connection…</string>
+    <string name="tg_wait_conditions">Auto upload is set up; it will run when charging or on Wi-Fi</string>
 </resources>

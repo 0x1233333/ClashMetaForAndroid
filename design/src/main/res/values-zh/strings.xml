@@ -350,4 +350,5 @@
     <string name="explain_too_big">文件太大,Telegram 拒绝了</string>
     <string name="explain_other">其他错误:%1$s</string>
     <string name="tg_testing">连接测试中…</string>
+    <string name="tg_wait_conditions">自动上传已就绪,将等到充电或 WiFi 时执行</string>
 </resources>

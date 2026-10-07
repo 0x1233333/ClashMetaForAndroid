@@ -12,8 +12,8 @@ import java.io.FileOutputStream
 internal class DiagStore(
     context: Context,
     private val fileName: String,
-    /** 单文件上限;routing 用 40MB(实测 354B/条 × 10s ≈ 2.9MB/天,7 天 20.4MB),weights 很小 */
-    private val maxBytes: Long = 40L * 1024L * 1024L,
+    /** 单文件上限;配合游标增量上传,routing 放宽到 200MB(约 60 天)(实测 354B/条 × 10s ≈ 2.9MB/天,7 天 20.4MB),weights 很小 */
+    private val maxBytes: Long = 200L * 1024L * 1024L,
     /** 非空时保证文件第一行是这一条,后续追加不再重复写。 */
     private val metaLine: String? = null,
 ) {
