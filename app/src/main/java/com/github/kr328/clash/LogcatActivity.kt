@@ -1,12 +1,15 @@
 package com.github.kr328.clash
 
+import android.content.ClipData
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.content.ServiceConnection
 import android.net.Uri
 import android.os.IBinder
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
 import com.github.kr328.clash.common.compat.startForegroundServiceCompat
 import com.github.kr328.clash.common.log.Log
 import com.github.kr328.clash.common.util.fileName
@@ -25,6 +28,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.io.OutputStreamWriter
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
@@ -60,7 +64,7 @@ class LogcatActivity : BaseActivity<LogcatDesign>() {
         design.patchMessages(messages, 0, messages.size)
 
         while (isActive) {
-            when (design.requests.receive()) {
+            when (val request = design.requests.receive()) {
                 LogcatDesign.Request.Delete -> {
                     withContext(Dispatchers.IO) {
                         logsDir.resolve(file.fileName).delete()
@@ -85,6 +89,9 @@ class LogcatActivity : BaseActivity<LogcatDesign>() {
                             design.showExceptionToast(e)
                         }
                     }
+                }
+                is LogcatDesign.Request.Share -> {
+                    shareFile(design, request.file)
                 }
                 else -> Unit
             }
@@ -114,6 +121,9 @@ class LogcatActivity : BaseActivity<LogcatDesign>() {
                             stopService(LogcatService::class.intent)
                             startActivity(LogsActivity::class.intent)
                             finish()
+                        }
+                        is LogcatDesign.Request.Share -> {
+                            shareFile(design, it.file)
                         }
                         else -> Unit
                     }
@@ -179,6 +189,26 @@ class LogcatActivity : BaseActivity<LogcatDesign>() {
                     }
                 }
             }
+        }
+    }
+
+    private suspend fun shareFile(design: LogcatDesign, file: File) {
+        try {
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+            val mime = if (file.extension.equals("zip", ignoreCase = true)) {
+                "application/zip"
+            } else {
+                "text/plain"
+            }
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = mime
+                putExtra(Intent.EXTRA_STREAM, uri)
+                clipData = ClipData.newRawUri(file.name, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(send, getString(R.string.share)))
+        } catch (_: Exception) {
+            design.showToast(R.string.share_failed, ToastDuration.Long)
         }
     }
 

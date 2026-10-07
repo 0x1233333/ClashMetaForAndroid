@@ -119,6 +119,10 @@
     <string name="delete_all_logs">Delete All Logs</string>
     <string name="delete_all_logs_warn">All historical logs will *LOST*</string>
     <string name="file_exported">File Exported</string>
+    <string name="share">Share</string>
+    <string name="share_failed">Share failed</string>
+    <string name="share_latest_log">Share latest log</string>
+    <string name="no_logs_to_share">No logs to share</string>
 
     <string name="behavior">Behavior</string>
     <string name="network">Network</string>
