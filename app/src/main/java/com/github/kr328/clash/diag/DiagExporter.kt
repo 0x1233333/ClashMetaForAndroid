@@ -14,6 +14,9 @@ import java.io.IOException
 import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
+import java.nio.ByteBuffer
+import java.nio.charset.CharacterCodingException
+import java.nio.charset.CodingErrorAction
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -47,7 +50,14 @@ object DiagExporter {
 
     data class Packed(val file: File, val items: String)
 
-    private data class Part(val name: String, val bytes: ByteArray, val item: String)
+    private data class Part(
+        val name: String,
+        val bytes: ByteArray,
+        val item: String,
+        val redacted: Boolean = true,
+    )
+
+    private data class ExtraFile(val name: String, val bytes: ByteArray, val text: String?)
 
     fun buildBundle(context: Context, redact: Boolean = true): File {
         return pack(context, redact).file
@@ -66,13 +76,13 @@ object DiagExporter {
         fitted.second.delete()
         val parts = fitted.first
         if (parts.isEmpty()) return app.getString(R.string.preview_upload_empty) + "\n"
-        val state = if (redact) {
-            app.getString(R.string.redacted_yes)
-        } else {
-            app.getString(R.string.redacted_no)
-        }
         val sb = StringBuilder()
         for (part in parts) {
+            val state = if (part.redacted) {
+                app.getString(R.string.redacted_yes)
+            } else {
+                app.getString(R.string.redacted_no)
+            }
             sb.append(part.name)
             sb.append('\t')
             sb.append(part.bytes.size)
@@ -133,7 +143,7 @@ object DiagExporter {
         val routingRaw = if (store.selRouting) readWhole(File(diagDir, "routing.jsonl")) else null
         val weightsRaw = if (store.selRouting) readWhole(File(diagDir, "weights.jsonl")) else null
         val crashesRaw = if (store.selCrashes) readFile(File(diagDir, "crashes.jsonl")) else null
-        val extras = if (store.selExtra) readExtra(File(diagDir, "extra")) else emptyList()
+        val extras = if (store.selExtra) readExtraDecoded(File(diagDir, "extra")) else emptyList()
         val kernelRaw = if (store.selKernelLog) readLatestKernel(context) else null
 
         val nodeNames = LinkedHashSet<String>()
@@ -141,8 +151,9 @@ object DiagExporter {
             for (raw in listOfNotNull(routingRaw, weightsRaw, crashesRaw)) {
                 nodeNames.addAll(collectNodeNames(String(raw, Charsets.UTF_8)))
             }
-            for ((_, raw) in extras) {
-                if (looksText(raw)) nodeNames.addAll(collectNodeNames(String(raw, Charsets.UTF_8)))
+            for (extra in extras) {
+                val text = extra.text ?: continue
+                nodeNames.addAll(collectNodeNames(text))
             }
         }
 
@@ -153,6 +164,7 @@ object DiagExporter {
                     "routing.jsonl",
                     prepareJsonl(routingRaw, DiagJson.ROUTING_META, redact, nodeNames),
                     "routing",
+                    redacted = redact,
                 )
             )
         }
@@ -162,6 +174,7 @@ object DiagExporter {
                     "weights.jsonl",
                     prepareJsonl(weightsRaw, DiagJson.WEIGHTS_META, redact, nodeNames),
                     "routing",
+                    redacted = redact,
                 )
             )
         }
@@ -169,17 +182,24 @@ object DiagExporter {
             var env = buildEnv(context)
             if (redact && nodeNames.isNotEmpty()) env = scrubNames(env, nodeNames)
             val bytes = env.toByteArray(Charsets.UTF_8)
-            if (bytes.isNotEmpty()) parts.add(Part("env.json", bytes, "env"))
+            if (bytes.isNotEmpty()) parts.add(Part("env.json", bytes, "env", redacted = redact))
         }
         if (crashesRaw != null) {
-            val bytes = prepareLoose("crashes.jsonl", crashesRaw, redact, nodeNames)
-            if (bytes.isNotEmpty()) parts.add(Part("crashes.jsonl", bytes, "crashes"))
+            val bytes = prepareCrashes(crashesRaw, redact, nodeNames)
+            if (bytes.isNotEmpty()) parts.add(Part("crashes.jsonl", bytes, "crashes", redacted = redact))
         }
         val seen = HashSet<String>()
-        for ((name, raw) in extras) {
-            if (!seen.add(name)) continue
-            val bytes = prepareLoose(name, raw, redact, nodeNames)
-            if (bytes.isNotEmpty()) parts.add(Part(name, bytes, "extra"))
+        for (extra in extras) {
+            val entry = if (extra.text == null) rawEntryName(extra.name) else extra.name
+            if (!seen.add(entry)) continue
+            val bytes = if (extra.text == null || !redact) {
+                extra.bytes
+            } else {
+                redactExtraText(extra.name, extra.text, nodeNames).toByteArray(Charsets.UTF_8)
+            }
+            if (bytes.isNotEmpty()) {
+                parts.add(Part(entry, bytes, "extra", redacted = extra.text != null && redact))
+            }
         }
         if (kernelRaw != null && kernelRaw.isNotEmpty()) {
             val bytes = if (redact && nodeNames.isNotEmpty()) {
@@ -187,7 +207,7 @@ object DiagExporter {
             } else {
                 kernelRaw
             }
-            if (bytes.isNotEmpty()) parts.add(Part("kernel.log", bytes, "kernel_log"))
+            if (bytes.isNotEmpty()) parts.add(Part("kernel.log", bytes, "kernel_log", redacted = redact))
         }
         return parts
     }
@@ -279,13 +299,13 @@ object DiagExporter {
         return if (raw.isEmpty()) null else raw
     }
 
-    private fun readExtra(dir: File): List<Pair<String, ByteArray>> {
+    private fun readExtraDecoded(dir: File): List<ExtraFile> {
         val files = dir.listFiles() ?: return emptyList()
-        val out = ArrayList<Pair<String, ByteArray>>()
+        val out = ArrayList<ExtraFile>()
         for (file in files.sortedBy { it.name }) {
             val entry = extraEntryName(file) ?: continue
             val raw = readFile(file) ?: continue
-            out.add(entry to raw)
+            out.add(ExtraFile(entry, raw, textOrNull(raw)))
         }
         return out
     }
@@ -296,6 +316,65 @@ object DiagExporter {
         if (name.isEmpty() || name == "." || name == "..") return null
         if (name.indexOf('/') >= 0 || name.indexOf('\\') >= 0) return null
         return "extra/$name"
+    }
+
+    /** 二进制原样进包,文件名后加 .RAW,界面用这个后缀提示未脱敏。 */
+    private fun rawEntryName(entry: String): String {
+        if (entry.endsWith(".RAW")) return entry
+        return "$entry.RAW"
+    }
+
+    private fun prepareCrashes(raw: ByteArray, redact: Boolean, nodeNames: Set<String>): ByteArray {
+        var text = String(raw, Charsets.UTF_8)
+        if (redact) {
+            text = preservingMeta(text) { body ->
+                var out = DiagExporter.redact(body)
+                if (nodeNames.isNotEmpty()) out = scrubNames(out, nodeNames)
+                DiagRedact.secrets(out)
+            }
+        }
+        text = capCrashRecords(text)
+        return text.toByteArray(Charsets.UTF_8)
+    }
+
+    private fun capCrashRecords(text: String): String {
+        val data = ArrayList<String>()
+        for (line in text.split('\n')) {
+            if (line.isEmpty()) continue
+            if (line.trimStart().startsWith("{\"_meta\"")) continue
+            if (!line.startsWith("{")) continue
+            data.add(line)
+        }
+        val kept = if (data.size > CrashCapture.MAX_RECORDS) {
+            data.takeLast(CrashCapture.MAX_RECORDS)
+        } else {
+            data
+        }
+        return buildString {
+            append(DiagJson.CRASHES_META)
+            append('\n')
+            for (line in kept) {
+                append(line)
+                append('\n')
+            }
+        }
+    }
+
+    private fun redactExtraText(name: String, text: String, nodeNames: Set<String>): String {
+        val fileName = name.substringAfterLast('/')
+        val trimmed = text.trimStart()
+        val jsonish = fileName.endsWith(".json") || fileName.endsWith(".jsonl") ||
+            trimmed.startsWith("{") || trimmed.startsWith("[")
+        var out = if (jsonish) {
+            val redacted = redact(text)
+            if (nodeNames.isEmpty()) redacted else scrubNames(redacted, nodeNames)
+        } else if (nodeNames.isEmpty()) {
+            text
+        } else {
+            replaceNames(text, nodeNames)
+        }
+        if (!jsonish && out.contains("\"node\"")) out = redact(out)
+        return DiagRedact.secrets(out)
     }
 
     private fun prepareJsonl(
@@ -311,27 +390,6 @@ object DiagExporter {
         }
         text = ensureMeta(text, meta)
         return text.toByteArray(Charsets.UTF_8)
-    }
-
-    private fun prepareLoose(
-        name: String,
-        raw: ByteArray,
-        redact: Boolean,
-        nodeNames: Set<String>,
-    ): ByteArray {
-        if (!redact || raw.isEmpty() || !looksText(raw)) return raw
-        val text = String(raw, Charsets.UTF_8)
-        val jsonish = name.endsWith(".json") || name.endsWith(".jsonl") ||
-            text.trimStart().startsWith("{") || text.trimStart().startsWith("[")
-        val out = if (jsonish) {
-            val redacted = redact(text)
-            if (nodeNames.isEmpty()) redacted else scrubNames(redacted, nodeNames)
-        } else if (nodeNames.isEmpty()) {
-            text
-        } else {
-            replaceNames(text, nodeNames)
-        }
-        return out.toByteArray(Charsets.UTF_8)
     }
 
     private fun ensureMeta(text: String, metaLine: String): String {
@@ -356,12 +414,40 @@ object DiagExporter {
         return first + "\n" + transform(text.substring(nl + 1))
     }
 
-    private fun looksText(bytes: ByteArray): Boolean {
-        val n = minOf(bytes.size, 8192)
-        for (i in 0 until n) {
-            if (bytes[i] == 0.toByte()) return false
+    /**
+     * extra 里文本和二进制的分界。
+     * 整段必须能按 UTF-8 严格解码,截断的多字节或图片魔数都算二进制。
+     * 再看解码后前 8192 个字符:不可打印字符占比超过 10% 也算二进制。
+     * 不可打印 = U+0000–U+0008、U+000B、U+000C、U+000E–U+001F、U+007F。
+     * \t \n \r 不算。10% 是为了放过带少量控制符的日志,
+     * 同时拦住 SQLite、压缩包、图片这类开头就有大量 NUL 或控制字节的文件。
+     * 判成二进制的不改字节,压缩包内文件名加 .RAW。
+     */
+    private fun textOrNull(bytes: ByteArray): String? {
+        if (bytes.isEmpty()) return ""
+        val text = try {
+            val decoder = Charsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+            decoder.decode(ByteBuffer.wrap(bytes)).toString()
+        } catch (_: CharacterCodingException) {
+            return null
         }
-        return true
+        val n = minOf(text.length, 8192)
+        if (n == 0) return text
+        var bad = 0
+        for (i in 0 until n) {
+            if (isNonPrintable(text[i])) bad++
+        }
+        if (bad.toDouble() / n.toDouble() > 0.10) return null
+        return text
+    }
+
+    private fun isNonPrintable(c: Char): Boolean {
+        val code = c.code
+        if (code == 0x7F) return true
+        if (code >= 0x20) return false
+        return code != '\t'.code && code != '\n'.code && code != '\r'.code
     }
 
     private fun writeZip(context: Context, parts: List<Part>): File {
@@ -563,8 +649,13 @@ object DiagExporter {
                 String(buf, 0, off, Charsets.UTF_8)
             }
             val obj = JSONObject(body)
-            if (!obj.has("version") || obj.isNull("version")) null
-            else obj.optString("version", "").ifEmpty { null }
+            val version = if (!obj.has("version") || obj.isNull("version")) {
+                null
+            } else {
+                obj.optString("version", "").ifEmpty { null }
+            }
+            if (!version.isNullOrEmpty()) CrashCapture.KernelVersionCache.value = version
+            version
         } catch (e: Exception) {
             null
         } finally {

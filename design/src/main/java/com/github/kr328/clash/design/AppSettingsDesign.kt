@@ -36,6 +36,7 @@ class AppSettingsDesign(
         UploadNow,
         PreviewUpload,
         StartKernelLog,
+        PickExtraFiles,
     }
 
     suspend fun showTextPage(titleRes: Int, message: CharSequence) {
@@ -219,6 +220,16 @@ class AppSettingsDesign(
                 title = R.string.sel_extra,
                 summary = R.string.sel_extra_summary,
             )
+
+            clickable(
+                title = R.string.pick_extra_files,
+                summary = R.string.pick_extra_files_summary,
+                icon = R.drawable.ic_baseline_attach_file,
+            ) {
+                clicked {
+                    requests.trySend(Request.PickExtraFiles)
+                }
+            }
 
             clickable(
                 title = R.string.preview_upload,

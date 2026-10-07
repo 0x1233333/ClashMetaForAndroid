@@ -2,10 +2,12 @@ package com.github.kr328.clash
 
 import android.app.Application
 import android.content.Context
+import android.os.Process
 import com.github.kr328.clash.common.Global
 import com.github.kr328.clash.common.compat.currentProcessName
 import com.github.kr328.clash.common.log.Log
 import com.github.kr328.clash.diag.AutoUploader
+import com.github.kr328.clash.diag.CrashCapture
 import com.github.kr328.clash.diag.KernelCapture
 import com.github.kr328.clash.diag.RoutingSampler
 import com.github.kr328.clash.remote.Remote
@@ -14,6 +16,7 @@ import com.github.kr328.clash.service.util.sendServiceRecreated
 import com.github.kr328.clash.util.clashDir
 import java.io.File
 import java.io.FileOutputStream
+import kotlin.system.exitProcess
 
 @Suppress("unused")
 class MainApplication : Application() {
@@ -26,6 +29,22 @@ class MainApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+
+        // 记下这一条,再把同一个异常交给原来的 handler。记录失败也不能把崩溃吃掉。
+        val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                CrashCapture.record(this, thread, throwable)
+            } catch (_: Throwable) {
+            }
+            if (previousHandler != null) {
+                previousHandler.uncaughtException(thread, throwable)
+            } else {
+                Process.killProcess(Process.myPid())
+                exitProcess(10)
+            }
+        }
+        CrashCapture.watch(this)
 
         // 后台进程里 ClashService / TunService 起来之前装上钩子。不在这里 start。
         TunnelDiag.hooks = object : TunnelDiag.Hooks {

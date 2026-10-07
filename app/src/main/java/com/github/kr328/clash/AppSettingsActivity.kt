@@ -1,6 +1,7 @@
 package com.github.kr328.clash
 
 import android.content.pm.PackageManager
+import androidx.activity.result.contract.ActivityResultContracts
 import com.github.kr328.clash.common.util.componentName
 import com.github.kr328.clash.design.AppSettingsDesign
 import com.github.kr328.clash.design.R
@@ -10,6 +11,7 @@ import com.github.kr328.clash.design.store.UiStore.Companion.mainActivityAlias
 import com.github.kr328.clash.design.ui.ToastDuration
 import com.github.kr328.clash.diag.AutoUploader
 import com.github.kr328.clash.diag.DiagExporter
+import com.github.kr328.clash.diag.ExtraFiles
 import com.github.kr328.clash.diag.KernelCapture
 import com.github.kr328.clash.service.store.ServiceStore
 import com.github.kr328.clash.util.ApplicationObserver
@@ -50,6 +52,21 @@ class AppSettingsActivity : BaseActivity<AppSettingsDesign>(), Behavior {
                         }
                         AppSettingsDesign.Request.StartKernelLog -> {
                             KernelCapture.startIfEnabled(this@AppSettingsActivity)
+                        }
+                        AppSettingsDesign.Request.PickExtraFiles -> {
+                            val uris = startActivityForResult(
+                                ActivityResultContracts.OpenMultipleDocuments(),
+                                arrayOf("*/*"),
+                            )
+                            if (uris.isNotEmpty()) {
+                                val added = withContext(Dispatchers.IO) {
+                                    ExtraFiles.copyIn(this@AppSettingsActivity, uris)
+                                }
+                                design.showToast(
+                                    getString(R.string.extra_files_added, added),
+                                    ToastDuration.Long,
+                                )
+                            }
                         }
                         AppSettingsDesign.Request.PreviewUpload -> {
                             val text = try {

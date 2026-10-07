@@ -20,6 +20,10 @@ internal object DiagJson {
     const val WEIGHTS_META =
         """{"_meta":"node weight snapshots","interval_s":300,"fields":{"ts":"ISO8601","groups":"map: group name -> array of {node, weight, delay, alive}"}}"""
 
+    /** 只放在 crashes.jsonl 第一行。勾选 sel_crashes(默认关)才打进诊断包。 */
+    const val CRASHES_META =
+        """{"_meta":"uncaught exceptions, one JSON per line. Written on the crash path, then the previous handler is called. Packed only when sel_crashes is checked (default off).","max_lines":200,"fields":{"ts":"ISO8601 local time","thread":"thread name","exception":"exception class name","message":"message with local paths, subscription URLs, UUIDs and private IPs removed","stack":"class.method(file:line) frames only","app_version":"app versionName","kernel_version":"core version if already known without a network call, else empty","screen":"on|off","last_screen":"simple name of the resumed activity, empty if none"}}"""
+
     data class Conn(
         val id: String,
         val start: String,
