@@ -27,6 +27,8 @@ import kotlin.coroutines.coroutineContext
 /**
  * 隧道运行期间每 10 秒采一次内核连接表,写成 routing.jsonl。
  * 权重全量每 60 秒另写 weights.jsonl,连接记录只留 alts_top3。
+ * 每条记录带连接活跃状态(state / idle_rounds / grew),判定规则见 [StallJudge]:
+ * 阈值必须大于采样间隔、只判定有传输史的连接、长时间无增长单列 dormant。
  * 由 [start] 拉起协程,由 [stop] 取消;停止后没有残留定时器。
  */
 class RoutingSampler private constructor(
@@ -36,6 +38,8 @@ class RoutingSampler private constructor(
         val down: Long,
         val up: Long,
         val lastChangeTs: Long,
+        val everGrew: Boolean,
+        val idleRounds: Int,
     )
 
     private data class Heavy(
@@ -131,18 +135,32 @@ class RoutingSampler private constructor(
                     seen.add(conn.id)
                     val prev = tracks[conn.id]
                     val grew = prev != null && (conn.download > prev.down || conn.upload > prev.up)
-                    val lastChange = when {
-                        prev == null -> nowMono
-                        grew -> nowMono
-                        else -> prev.lastChangeTs
+                    val idleRounds = when {
+                        prev == null -> 0
+                        grew -> 0
+                        else -> prev.idleRounds + 1
                     }
-                    tracks[conn.id] = Track(conn.download, conn.upload, lastChange)
+                    val everGrew = grew || (prev?.everGrew ?: false)
+                    val lastChange = if (prev == null || grew) nowMono else prev.lastChangeTs
+                    tracks[conn.id] = Track(
+                        down = conn.download,
+                        up = conn.upload,
+                        lastChangeTs = lastChange,
+                        everGrew = everGrew,
+                        idleRounds = idleRounds,
+                    )
                     // 第一次见到这条连接没有历史可比,idle 记 0;之后只在字节增加时清零。
                     val idleS = if (prev == null) 0.0 else (nowMono - lastChange) / 1000.0
-                    val stalled = idleS > STALL_IDLE_S
+                    // 判定以"连续无增长轮数"为准(见 StallJudge);idle_s 只作参考值上报。
+                    val state = StallJudge.verdict(grew, everGrew, idleRounds)
+                    val stalled = state == StallJudge.STALLED
                     if (stalled) addedStall++
+                    // dormant(长时间无增长)与 nodata(从未见增长)不写入:
+                    // 它们既无传输活动也无判定价值,写下来只会淹没有效样本(实测占约 60%)。
+                    // 追踪表在上方已更新,这里跳过不影响后续判定。
+                    if (state == StallJudge.DORMANT || state == StallJudge.NODATA) continue
                     val node = DiagJson.nodeName(conn.chains)
-                    val (chosen, alts) = matchAlternatives(node, conn.chains, snap)
+                    val match = matchAlternatives(node, conn.chains, snap)
                     lines.add(
                         DiagJson.record(
                             ts = ts,
@@ -164,11 +182,15 @@ class RoutingSampler private constructor(
                             upRate = conn.maxUploadRate,
                             ageS = DiagJson.ageSeconds(conn.start, nowWall),
                             idleS = DiagJson.round1(idleS),
+                            idleRounds = idleRounds,
+                            grew = grew,
+                            state = state,
                             stalled = stalled,
                             netType = netType,
                             screen = screen,
-                            chosenWeight = chosen,
-                            altsTop3 = alts,
+                            chosenWeight = match.chosenWeight,
+                            chosenDelayMs = match.chosenDelayMs,
+                            altsTop3 = match.alts,
                         )
                     )
                 }
@@ -250,53 +272,92 @@ class RoutingSampler private constructor(
         )
     }
 
+    private data class Cand(
+        val node: String,
+        val weight: Double?,
+        val delay: Long?,
+        val alive: Boolean?,
+    )
+
+    private data class Match(
+        val chosenWeight: Double?,
+        val chosenDelayMs: Int?,
+        val alts: JSONArray?,
+    )
+
     /**
-     * 权重和延迟拿不到就返回 null,调用方省略字段,不填假数。
-     * alts_top3 不含当前选中的节点,按 weight 降序最多 3 条。
+     * 候选与已选节点的权重/延迟。权重接口只覆盖 Smart 组,其余组(Select/UrlTest 等)
+     * 用成员列表 + /proxies 的延迟折算,保证"是否本可更优"对所有流量都能判定。
+     * 拿不到就返回 null,调用方省略字段,不填假数。alts 不含当前选中的节点。
      */
     private fun matchAlternatives(
         node: String,
         chains: List<String>,
         snap: Heavy?,
-    ): Pair<Double?, JSONArray?> {
-        if (snap == null || node.isEmpty()) return null to null
-        val group = pickGroup(chains, node, snap) ?: return null to null
-        val ranked = snap.weights[group].orEmpty()
-        if (ranked.isEmpty()) return null to null
-        var chosen: Double? = null
-        val others = ArrayList<DiagJson.Ranked>(ranked.size)
-        for (item in ranked) {
-            if (item.node == node) {
-                chosen = item.weight
+    ): Match {
+        if (snap == null || node.isEmpty()) return Match(null, null, null)
+        val group = pickGroup(chains, node, snap) ?: return Match(null, null, null)
+        val ranked = snap.weights[group]
+        val cands = ArrayList<Cand>()
+        if (!ranked.isNullOrEmpty()) {
+            for (item in ranked) {
+                val proxy = snap.proxies[item.node]
+                cands.add(Cand(item.node, item.weight, proxy?.lastDelayMs, proxy?.alive))
+            }
+        } else {
+            val info = snap.proxies[group] ?: return Match(null, null, null)
+            for (member in info.members) {
+                val proxy = snap.proxies[member] ?: continue
+                cands.add(Cand(member, null, proxy.lastDelayMs, proxy.alive))
+            }
+        }
+        if (cands.isEmpty()) return Match(null, null, null)
+
+        var chosenWeight: Double? = null
+        var chosenDelay: Int? = null
+        val others = ArrayList<Cand>(cands.size)
+        for (cand in cands) {
+            if (cand.node == node) {
+                chosenWeight = cand.weight
+                cand.delay?.takeIf { it > 0 }?.let { chosenDelay = it.toInt() }
                 continue
             }
-            others.add(item)
+            others.add(cand)
         }
-        others.sortByDescending { it.weight }
-        if (others.isEmpty()) return chosen to null
+        // Smart 组按权重降序;无权重接口的组按延迟升序(未探测/超时的排最后)
+        others.sortWith(
+            compareByDescending<Cand> { it.weight ?: Double.NEGATIVE_INFINITY }
+                .thenBy { it.delay?.takeIf { d -> d > 0 } ?: Long.MAX_VALUE }
+        )
+        if (others.isEmpty()) return Match(chosenWeight, chosenDelay, null)
         val alts = JSONArray()
         val limit = minOf(3, others.size)
         for (i in 0 until limit) {
             val item = others[i]
-            val proxy = snap.proxies[item.node]
             val obj = JSONObject()
             obj.put("node", item.node)
-            obj.put("weight", item.weight)
-            if (proxy?.lastDelayMs != null) obj.put("last_delay_ms", proxy.lastDelayMs)
-            if (proxy?.alive != null) obj.put("alive", proxy.alive)
+            if (item.weight != null) obj.put("weight", item.weight)
+            if (item.delay != null && item.delay > 0) obj.put("last_delay_ms", item.delay)
+            if (item.alive != null) obj.put("alive", item.alive)
             alts.put(obj)
         }
-        return chosen to alts
+        return Match(chosenWeight, chosenDelay, alts)
     }
 
+    /**
+     * 找出该连接所属的策略组。组名优先从 chains 里取,只在 /proxies 里存在且非空才算数;
+     * 兜底按成员归属反查。不再限定 Smart 组 —— 非 Smart 组没有权重接口,但照样有候选和延迟。
+     */
     private fun pickGroup(chains: List<String>, node: String, snap: Heavy): String? {
         for (i in 1 until chains.size) {
             val name = chains[i]
-            if (snap.weights.containsKey(name)) return name
+            val info = snap.proxies[name] ?: continue
+            if (info.members.isEmpty()) continue
+            return name
         }
         for ((name, info) in snap.proxies) {
-            if (!info.type.equals("Smart", ignoreCase = true)) continue
-            if (node in info.members && snap.weights.containsKey(name)) return name
+            if (info.members.isEmpty()) continue
+            if (node in info.members) return name
         }
         return null
     }
@@ -384,7 +445,6 @@ class RoutingSampler private constructor(
         private const val WEIGHTS_SNAPSHOT_MS = 5 * 60_000L
         private const val HEAVY_MS = 60_000L
         private const val HTTP_TIMEOUT_MS = 3_000
-        private const val STALL_IDLE_S = 5.0
         private val gate = Any()
 
         @Volatile

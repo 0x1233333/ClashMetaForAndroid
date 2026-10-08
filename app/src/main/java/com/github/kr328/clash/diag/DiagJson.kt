@@ -14,7 +14,7 @@ import java.util.TimeZone
 internal object DiagJson {
     /** 只放在 routing.jsonl 第一行。数据行不要带这份说明。 */
     const val ROUTING_META =
-        """{"_meta":"routing samples, one JSON per line","interval_s":10,"fields":{"ts":"ISO8601 local time","conn_id":"connection id","node":"sha1-hashed node name (node-<6 hex>)","target_class":"sha1 of destination host, never plaintext","down_bytes":"cumulative bytes down","up_bytes":"cumulative bytes up","down_rate":"recent down bytes/s","up_rate":"recent up bytes/s","age_s":"connection age seconds","idle_s":"seconds since last byte growth","stalled":"idle_s > 5","net_type":"wifi|cellular","screen":"on|off","chosen_weight":"weight of the selected node","alts_top3":"top-3 candidate nodes by weight with their weight/last_delay_ms/alive"}}"""
+        """{"_meta":"routing samples, one JSON per line","interval_s":10,"fields":{"ts":"ISO8601 local time","conn_id":"connection id","node":"sha1-hashed node name (node-<6 hex>)","target_class":"sha1 of destination host, never plaintext","down_bytes":"cumulative bytes down","up_bytes":"cumulative bytes up","down_rate":"recent down bytes/s","up_rate":"recent up bytes/s","age_s":"connection age seconds","idle_s":"seconds since last byte growth","idle_rounds":"consecutive sampling rounds without byte growth","grew":"bytes grew in this round","state":"active|stalled|dormant|nodata","stalled":"state == stalled (transfer observed, then 3+ rounds without growth, and not yet 18 rounds)","net_type":"wifi|cellular","screen":"on|off","chosen_weight":"weight of the selected node","alts_top3":"top-3 candidate nodes by weight with their weight/last_delay_ms/alive"}}"""
 
     /** 只放在 weights.jsonl 第一行。快照间隔与 RoutingSampler 的 5 分钟落盘一致。 */
     const val WEIGHTS_META =
@@ -201,10 +201,14 @@ internal object DiagJson {
         upRate: Long,
         ageS: Double?,
         idleS: Double,
+        idleRounds: Int,
+        grew: Boolean,
+        state: String,
         stalled: Boolean,
         netType: String,
         screen: String,
         chosenWeight: Double?,
+        chosenDelayMs: Int?,
         altsTop3: JSONArray?,
     ): String {
         val obj = JSONObject()
@@ -220,10 +224,14 @@ internal object DiagJson {
         obj.put("up_rate", upRate)
         if (ageS != null) obj.put("age_s", ageS)
         obj.put("idle_s", idleS)
+        obj.put("idle_rounds", idleRounds)
+        obj.put("grew", grew)
+        obj.put("state", state)
         obj.put("stalled", stalled)
         obj.put("net_type", netType)
         obj.put("screen", screen)
         if (chosenWeight != null) obj.put("chosen_weight", chosenWeight)
+        if (chosenDelayMs != null) obj.put("chosen_delay_ms", chosenDelayMs)
         if (altsTop3 != null) obj.put("alts_top3", altsTop3)
         return obj.toString()
     }
