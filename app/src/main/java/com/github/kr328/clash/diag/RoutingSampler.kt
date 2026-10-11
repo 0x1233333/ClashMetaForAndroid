@@ -68,6 +68,8 @@ class RoutingSampler private constructor(
     private var lastWeights: Map<String, List<DiagJson.Ranked>>? = null
     @Volatile private var lastHeavyAt = 0L
     private val stalledGeneration = AtomicLong(0)
+    private var memberIndex: Map<String, String>? = null
+    private var memberIndexSource: Map<String, DiagJson.ProxyInfo>? = null
 
     private fun launch() {
         val created = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -355,11 +357,18 @@ class RoutingSampler private constructor(
             if (info.members.isEmpty()) continue
             return name
         }
-        for ((name, info) in snap.proxies) {
-            if (info.members.isEmpty()) continue
-            if (node in info.members) return name
+        // 成员归属反查:走预建索引(node -> 组名),避免对每条连接做 O(组数 × 成员数) 扫描。
+        // 索引随快照刷新重建,快照没换就复用。
+        if (memberIndexSource !== snap.proxies) {
+            val idx = HashMap<String, String>(snap.proxies.size * 4)
+            for ((name, info) in snap.proxies) {
+                if (info.members.isEmpty()) continue
+                for (member in info.members) idx.putIfAbsent(member, name)
+            }
+            memberIndex = idx
+            memberIndexSource = snap.proxies
         }
-        return null
+        return memberIndex?.get(node)
     }
 
     private fun readNetType(): String {

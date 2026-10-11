@@ -21,7 +21,7 @@ object AutoUploader {
     private const val UPLOAD_TIMEOUT_MS = 120_000L
 
     private const val MAX_ZIP_BYTES = 8L * 1024L * 1024L
-    private const val STALL_THROTTLE_MS = 30L * 60L * 1000L
+    private const val STALL_THROTTLE_MS = 2L * 60L * 60L * 1000L
     private const val auto_upload = "auto_upload"
     private const val upload_interval = "upload_interval"
     private const val upload_on_stall = "upload_on_stall"
