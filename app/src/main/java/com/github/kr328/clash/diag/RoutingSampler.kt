@@ -157,10 +157,12 @@ class RoutingSampler private constructor(
                     val state = StallJudge.verdict(grew, everGrew, idleRounds)
                     val stalled = state == StallJudge.STALLED
                     if (stalled) addedStall++
-                    // dormant(长时间无增长)与 nodata(从未见增长)不写入:
-                    // 它们既无传输活动也无判定价值,写下来只会淹没有效样本(实测占约 60%)。
-                    // 追踪表在上方已更新,这里跳过不影响后续判定。
-                    if (state == StallJudge.DORMANT || state == StallJudge.NODATA) continue
+                    // 降采样而非丢弃:
+                    //   nodata(本次观测内从未见增长)照常写入 —— 它是连接刚出现的唯一记录,丢掉会让整段时间没有数据;
+                    //   dormant(长时间无增长)每 6 轮(60 秒)留一条心跳,既压住体积又保证采集不中断。
+                    // 之前一律 continue 会让长时间以闲置连接为主时选路文件完全停更,
+                    // 进而导致游标停在文件末尾、后续上传永远为空(实测因此断了数天数据流)。
+                    if (state == StallJudge.DORMANT && idleRounds % 6 != 0) continue
                     val node = DiagJson.nodeName(conn.chains)
                     val match = matchAlternatives(node, conn.chains, snap)
                     lines.add(
