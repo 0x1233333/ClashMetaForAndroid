@@ -46,6 +46,9 @@ class MainApplication : Application() {
         }
         CrashCapture.watch(this)
 
+        // 启动自愈:采集文件若因轮转失败越过上限,这里无条件截断,避免采集永久停更
+        com.github.kr328.clash.diag.DiagStore.selfHealAll(this)
+
         // 后台进程里 ClashService / TunService 起来之前装上钩子。不在这里 start。
         TunnelDiag.hooks = object : TunnelDiag.Hooks {
             override fun start(context: Context) {

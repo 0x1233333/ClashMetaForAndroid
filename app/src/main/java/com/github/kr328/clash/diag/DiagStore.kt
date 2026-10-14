@@ -22,6 +22,20 @@ internal class DiagStore(
     private val rotated = File(dir, "$fileName.1")
     private val lock = Any()
 
+    init {
+        // 启动自愈:上一轮若因轮转失败/异常导致文件越过上限,这里直接截断。
+        // 否则该文件会既写不进去(超限)、又轮转不成(异常路径),上传永远是空的
+        // ——实测曾因此让选路数据断流数天,而只在 append 里兜底是救不回来的。
+        try {
+            if (active.isFile && active.length() >= maxBytes) {
+                Log.w("diag: $fileName over cap at startup (${active.length()} bytes), truncating")
+                FileOutputStream(active, false).use { }
+            }
+        } catch (e: Exception) {
+            Log.w("diag: startup truncate $fileName failed: ${e.javaClass.simpleName}")
+        }
+    }
+
     fun appendAll(lines: List<String>) {
         if (lines.isEmpty()) return
         val payload = buildString {
@@ -43,7 +57,14 @@ internal class DiagStore(
                     Log.w("diag: delete ${rotated.name} failed")
                 }
                 if (!active.renameTo(rotated)) {
-                    Log.w("diag: rotate $fileName failed")
+                    // 轮转失败时兜底截断:文件已超上限,若继续追加会让它无限增长,
+                    // 而轮转又永远做不成(实测曾导致该文件卡死不再更新、上传恒为空)。
+                    Log.w("diag: rotate $fileName failed, truncating instead")
+                    try {
+                        java.io.FileOutputStream(active, false).use { }
+                    } catch (e: Exception) {
+                        Log.w("diag: truncate $fileName failed: ${e.javaClass.simpleName}")
+                    }
                 }
             }
             val prefix = if (!active.exists() || active.length() == 0L) metaBytes() else null
@@ -73,4 +94,30 @@ internal class DiagStore(
         return text.toByteArray(Charsets.UTF_8)
     }
 
+
+    companion object {
+        /** 采集文件上限,与实例默认值保持一致。 */
+        private const val CAP: Long = 200L * 1024L * 1024L
+
+        /**
+         * 启动自愈:把超过上限的采集文件截断。
+         * 必须在 App 启动时无条件调用 —— 只写在实例 init 里不够,因为实例要等隧道起来才构造,
+         * 一旦文件因轮转失败卡在超限状态,采集会长期停更而自愈永远不会执行。
+         */
+        @JvmStatic
+        fun selfHealAll(context: Context) {
+            val dir = File(context.applicationContext.filesDir, "diag")
+            for (name in listOf("routing.jsonl", "weights.jsonl", "crashes.jsonl")) {
+                try {
+                    val f = File(dir, name)
+                    if (f.isFile && f.length() >= CAP) {
+                        Log.w("diag: $name over cap at startup (${f.length()} bytes), truncating")
+                        FileOutputStream(f, false).use { }
+                    }
+                } catch (e: Exception) {
+                    Log.w("diag: selfHeal $name failed: ${e.javaClass.simpleName}")
+                }
+            }
+        }
+    }
 }
