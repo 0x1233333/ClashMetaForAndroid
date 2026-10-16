@@ -97,8 +97,14 @@ class SmartHealthModule(
                     checkSmartGroups()
                     waitEvents(currentIntervalMs())
                 } else {
-                    // 熄屏:Doze 下测速结果不可靠且费电,只等亮屏/网络事件
+                    // 熄屏:Doze 下测速结果不可靠且费电,只等亮屏/网络事件。
+                    // 但网络本身发生变化(切网、走出信号盲区)时必须补一次有界重测:
+                    // 否则事件会被这里静默吞掉,一直要等用户点亮屏幕才恢复。
+                    networkEvents.tryReceive()
                     waitEvents(SCREEN_OFF_INTERVAL_MS)
+                    if (networkEvents.tryReceive().isSuccess) {
+                        checkSmartGroups()
+                    }
                 }
             }
         } finally {

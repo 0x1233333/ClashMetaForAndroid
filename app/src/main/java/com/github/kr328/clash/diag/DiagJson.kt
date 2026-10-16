@@ -5,6 +5,7 @@ import org.json.JSONObject
 import java.security.MessageDigest
 import java.util.Calendar
 import java.util.Locale
+import java.io.File
 import java.util.TimeZone
 
 /**

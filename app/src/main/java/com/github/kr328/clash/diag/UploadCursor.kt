@@ -69,8 +69,11 @@ internal object UploadCursor {
         val len = f.length()
         // 文件缩短(轮转/被清理)时游标可能越过文件末尾 —— 此时从 0 重新开始,
         // 否则该文件将永远无法再上传(游标只增不减会卡死)
-        val effectiveFrom = if (from > len) 0L else from
-        if (effectiveFrom >= len) return ByteArray(0) to effectiveFrom
+        // 游标恰好等于文件长度时也必须回到开头:
+        // 文件若因轮转/异常停在某个长度,游标也正好卡在那个位置,用 ">" 判断会永远返回空,
+        // 该文件就再也传不出任何内容(实测选路数据因此断流数天)。
+        val effectiveFrom = if (from >= len) 0L else from
+        if (len == 0L) return ByteArray(0) to 0L
         val end = minOf(len, effectiveFrom + limit)
         val want = (end - effectiveFrom).toInt()
         if (want <= 0) return ByteArray(0) to effectiveFrom
