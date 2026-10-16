@@ -65,3 +65,7 @@ google-services.json
 # MacOS
 .DS_Store
 .kotlin/
+
+# 签名库/口令绝不入库
+release.keystore
+release.keystore.orig
