@@ -61,12 +61,18 @@ internal object UploadCursor {
 
     /**
      * 读取 [from, from+limit) 区间。返回字节与「实际结束位置」。
-     * 若从中间截断,会**丢弃首个半行**(避免出现未闭合的 JSON 片段)。
+     *
+     * 两端都要落在行边界上:开头若切在行中间,丢弃首个半行;结尾若切在行中间,同样不回传这半行,
+     * 并把结束位置停在最后一个换行符之后 —— 下一轮从这里继续读,那半行到那时已经写完整。
+     * 只丢开头不丢结尾时,块尾会留下未闭合的 JSON 片段,接收端只能当坏行扔掉(实测每天 1~2 行)。
      */
-    fun readRange(context: Context, name: String, from: Long, limit: Long): Pair<ByteArray, Long> {
-        val f = File(File(context.filesDir, "diag"), name)
-        if (!f.isFile) return ByteArray(0) to from
-        val len = f.length()
+    fun readRange(context: Context, name: String, from: Long, limit: Long): Pair<ByteArray, Long> =
+        readRange(File(File(context.filesDir, "diag"), name), from, limit)
+
+    /** 同上,直接对文件操作(不依赖 Android 上下文,便于本地用真实数据复现切块行为)。 */
+    fun readRange(file: File, from: Long, limit: Long): Pair<ByteArray, Long> {
+        if (!file.isFile) return ByteArray(0) to from
+        val len = file.length()
         // 文件缩短(轮转/被清理)时游标可能越过文件末尾 —— 此时从 0 重新开始,
         // 否则该文件将永远无法再上传(游标只增不减会卡死)
         // 游标恰好等于文件长度时也必须回到开头:
@@ -78,34 +84,36 @@ internal object UploadCursor {
         val want = (end - effectiveFrom).toInt()
         if (want <= 0) return ByteArray(0) to effectiveFrom
         val buf = ByteArray(want)
-        RandomAccessFile(f, "r").use { raf ->
+        var off = 0
+        RandomAccessFile(file, "r").use { raf ->
             raf.seek(effectiveFrom)
-            var off = 0
             while (off < want) {
                 val n = raf.read(buf, off, want - off)
                 if (n <= 0) break
                 off += n
             }
-            if (off < want) {
-                return buf.copyOf(off) to (effectiveFrom + off)
-            }
         }
-        // 只有当 from 落在【行中间】时才需要丢掉首个半行:
-        // 判断依据 = from 前一个字节不是换行(且 from > 0)
-        if (from > 0L) {
+        if (off <= 0) return ByteArray(0) to effectiveFrom
+
+        // 只有当 from 落在【行中间】时才需要丢掉首个半行:判断依据 = from 前一个字节不是换行
+        var start = 0
+        if (effectiveFrom > 0L) {
             val prev = ByteArray(1)
-            RandomAccessFile(f, "r").use { raf ->
-                raf.seek(from - 1)
+            RandomAccessFile(file, "r").use { raf ->
+                raf.seek(effectiveFrom - 1)
                 raf.readFully(prev)
             }
-            if (prev[0] != '\n'.code.toByte()) {
-                val nl = buf.indexOf('\n'.code.toByte())
-                if (nl in 0 until buf.size - 1) {
-                    // 半行丢弃(不发送);但【游标必须推进到本块末尾】—— 因为剩下的部分已经全部发出
-                    return buf.copyOfRange(nl + 1, buf.size) to end
-                }
-            }
+            if (prev[0] != JsonlSlice.NL) start = JsonlSlice.skipPartialHead(buf, off)
         }
-        return buf to end
+
+        // 尾部半行不发,游标停在最后一个完整行之后;剩余部分下一轮再传。
+        // atEof:本段是否已经读到文件末尾 —— 到末尾且末行没写完时,宁可这一轮什么都不发,
+        // 也不能把半行当成完整记录送出去(接收端只能当坏行丢弃,且那半行的后半截再也取不回来)。
+        val atEof = effectiveFrom + off >= len
+        val keep = JsonlSlice.keepLength(buf, off, start, atEof)
+        if (keep < off) {
+            Log.w("diag: partial tail line trimmed (jsonl), resend next round")
+        }
+        return buf.copyOfRange(start, keep) to (effectiveFrom + keep)
     }
 }

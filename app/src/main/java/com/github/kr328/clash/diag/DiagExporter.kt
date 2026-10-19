@@ -620,7 +620,10 @@ object DiagExporter {
     private fun readTail(file: File, maxBytes: Int): ByteArray {
         val len = file.length()
         if (len <= 0L) return ByteArray(0)
-        if (len <= maxBytes) return file.readBytes()
+        if (len <= maxBytes) {
+            // 整文件读取也要裁掉尾部半行:采集是边写边追加,读的瞬间末行可能只写了一半
+            return JsonlSlice.trimTrailingPartial(file.readBytes())
+        }
         RandomAccessFile(file, "r").use { raf ->
             raf.seek(len - maxBytes)
             val buf = ByteArray(maxBytes)
@@ -631,12 +634,8 @@ object DiagExporter {
                 off += n
             }
             val raw = if (off == maxBytes) buf else buf.copyOf(off)
-            // 从文件中间截断时,首段可能是半行 —— 丢弃它,避免出现未闭合的 JSON 片段
-            val nl = raw.indexOf('\n'.code.toByte())
-            if (nl in 0 until raw.size - 1) {
-                return raw.copyOfRange(nl + 1, raw.size)
-            }
-            return raw
+            // 从文件中间截断时,首段可能是半行 —— 丢弃它;尾部同理,末行可能正写到一半
+            return JsonlSlice.trimTrailingPartial(JsonlSlice.trimLeadingPartial(raw))
         }
     }
 
