@@ -60,6 +60,19 @@ class RoutingSampler private constructor(
     private val tracks = HashMap<String, Track>()
     private val trackLock = Any()
 
+    /** 每轮把 App/内核/组/采样器/文件 的整体状态写一行 state.jsonl,见 [StateCollector]。 */
+    private val stateCollector = StateCollector(appContext)
+    private var rounds = 0L
+    private var failedRounds = 0L
+    private var droppedRounds = 0L
+    private var heavyRefreshes = 0L
+    private var connRows = 0L
+    private var stalledRows = 0L
+    private var avgRoundMs = 0L
+    private var maxRoundMs = 0L
+    private var lastOkAt = 0L
+    private var lastStateAt = 0L
+
     @Volatile private var running = true
     @Volatile private var scope: CoroutineScope? = null
     @Volatile private var activeConn: HttpURLConnection? = null
@@ -82,33 +95,71 @@ class RoutingSampler private constructor(
         activeConn?.disconnect()
         scope?.cancel()
         synchronized(trackLock) { tracks.clear() }
+        // 停止前补一条状态快照:下一次要排查"为什么那个时间段没数据",得有收尾那一刻的状态
+        try { maybeCaptureState(force = true) } catch (e: Exception) {
+            Log.w("diag: stop-state failed: ${e.javaClass.simpleName}")
+        }
         heavy = null
         scope = null
     }
 
     private suspend fun runLoop() {
+        // 降优先级:采集是后台活,不该和前台解码/滚动抢 CPU
+        try {
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+        } catch (e: Exception) {
+            Log.w("diag: set thread priority failed: ${e.javaClass.simpleName}")
+        }
         while (running && coroutineContext.isActive) {
             val started = SystemClock.elapsedRealtime()
             try {
                 sampleOnce()
+                rounds++
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                failedRounds++
                 Log.w("diag: sample round failed: ${e.message}")
             }
+            // 每轮耗时记账:state.jsonl 里的 cpu_ms_per_min / avg_round_ms 就是靠它
+            val spent = SystemClock.elapsedRealtime() - started
+            avgRoundMs = if (avgRoundMs == 0L) spent else (avgRoundMs * 4 + spent) / 5
+            if (spent > maxRoundMs) maxRoundMs = spent
+            maybeCaptureState()
             if (!running || !coroutineContext.isActive) break
-            val wait = INTERVAL_MS - (SystemClock.elapsedRealtime() - started)
+            val wait = INTERVAL_MS - spent
             if (wait > 0) delay(wait)
         }
+    }
+
+    /** 状态快照默认 30 分钟一次,状态没变就不落盘(StateCollector 自己比对)。 */
+    private fun maybeCaptureState(force: Boolean = false) {
+        val now = SystemClock.elapsedRealtime()
+        if (!force && lastStateAt != 0L && now - lastStateAt < STATE_INTERVAL_MS) return
+        lastStateAt = now
+        val stats = StateCollector.SamplerStats(
+            rounds = rounds,
+            failedRounds = failedRounds,
+            lastOkAgeS = if (lastOkAt == 0L) -1 else (System.currentTimeMillis() - lastOkAt) / 1000,
+            avgRoundMs = avgRoundMs,
+            maxRoundMs = maxRoundMs,
+            heavyRefreshes = heavyRefreshes,
+            connRows = connRows,
+            stalledRows = stalledRows,
+            droppedRounds = droppedRounds,
+        )
+        stateCollector.capture(if (rounds == 0L) "start" else "periodic", stats, force)
     }
 
     private fun sampleOnce() {
         if (!running) return
         val refreshed = maybeRefreshHeavy()
+        if (refreshed) heavyRefreshes++
         try {
             if (!running) return
             val body = httpGet("$CONTROLLER/connections")
             if (body == null) {
+                droppedRounds++
                 if (running) Log.w("diag: skip round, /connections unavailable")
                 return
             }
@@ -116,6 +167,7 @@ class RoutingSampler private constructor(
             val conns = try {
                 DiagJson.parseConnections(body)
             } catch (e: Exception) {
+                droppedRounds++
                 Log.w("diag: bad /connections json (${e.javaClass.simpleName})")
                 return
             }
@@ -208,6 +260,9 @@ class RoutingSampler private constructor(
 
             if (running) {
                 routingStore.appendAll(lines)
+                connRows += lines.size
+                stalledRows += addedStall
+                lastOkAt = System.currentTimeMillis()
                 if (addedStall > 0) stalledGeneration.addAndGet(addedStall.toLong())
             }
         } finally {
@@ -480,6 +535,8 @@ class RoutingSampler private constructor(
         private const val INTERVAL_MS = 10_000L
         private const val WEIGHTS_SNAPSHOT_MS = 5 * 60_000L
         private const val HEAVY_MS = 60_000L
+        /** 状态快照间隔。30 分钟一次足够定位原因,又几乎不耗 CPU。 */
+        private const val STATE_INTERVAL_MS = 30 * 60_000L
         private const val HTTP_TIMEOUT_MS = 3_000
         private val gate = Any()
 

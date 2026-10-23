@@ -187,6 +187,27 @@ internal object DiagJson {
         return if (arr.length() > 0) arr else null
     }
 
+    /**
+     * 名字 → `node-<6 hex>`(SHA-1 前 6 位)。组名/节点名统一走它,
+     * 这样 state.jsonl 里可以直接写脱敏名,磁盘上从不出现明文。
+     */
+    fun nameToken(name: String): String {
+        if (name.isEmpty()) return name
+        val digest = MessageDigest.getInstance("SHA-1").digest(name.toByteArray(Charsets.UTF_8))
+        val alphabet = "0123456789abcdef"
+        val hex = CharArray(6)
+        for (i in 0 until 3) {
+            val b = digest[i].toInt() and 0xff
+            hex[i * 2] = alphabet[b ushr 4]
+            hex[i * 2 + 1] = alphabet[b and 0x0f]
+        }
+        return "node-" + String(hex)
+    }
+
+    /** 只放在 state.jsonl 第一行。 */
+    const val STATE_META =
+        """{"_meta":"per-round state snapshots, one JSON per line","interval_s":1800,"fields":{"ts":"ISO8601 local time","type":"state","trigger":"start|periodic|stop","app":"version/pid/uptime/notification/vpn 准备状态","device":"机型/SDK/ABI/核数/内存/存储/进程 RSS","network":"当前网络类型/是否 VPN/是否计费/是否已验证","power":"亮屏/省电模式/电池优化白名单/电量/温度","core":"内核 API 是否可达/版本/配置摘要/组数/节点数/存活节点数","groups":"每个策略组:脱敏组名/类型/当前选中(脱敏)/成员数/存活数/是否为空","sampler":"采样轮次/失败轮次/掉轮/平均与最大单轮耗时/自进程 CPU(毫秒/分钟)/行数","files":"采集文件大小/最后写入距今秒数/是否卡住(>1800s 未写)"}}"""
+
     fun formatTs(epochMs: Long): String {
         val fmt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
         val tz = TimeZone.getDefault()

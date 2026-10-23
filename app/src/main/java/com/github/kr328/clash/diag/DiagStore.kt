@@ -134,7 +134,7 @@ internal class DiagStore(
         @JvmStatic
         fun selfHealAll(context: Context) {
             val dir = File(context.applicationContext.filesDir, "diag")
-            for (name in listOf("routing.jsonl", "weights.jsonl", "crashes.jsonl")) {
+            for (name in listOf("routing.jsonl", "weights.jsonl", "state.jsonl", "crashes.jsonl")) {
                 try {
                     val f = File(dir, name)
                     if (f.isFile && f.length() >= CAP) {

@@ -33,6 +33,8 @@ object DiagExporter {
     private const val MAX_BUNDLE_BYTES = 8 * 1024 * 1024
     private const val ROUTING_TAIL_BYTES = 2 * 1024 * 1024
     private const val WEIGHTS_TAIL_BYTES = 512 * 1024
+    /** 状态快照一行约 1.5KB,30 分钟一条;取尾部 256KB 够 60 天。 */
+    private const val STATE_TAIL_BYTES = 256 * 1024
     private const val CONTROLLER_VERSION = "http://127.0.0.1:9090/version"
     private const val HTTP_TIMEOUT_MS = 1500
     private val LOG_NAME = Regex("clash-(\\d+)\\.log")
@@ -83,6 +85,8 @@ object DiagExporter {
         if (store.selRouting) {
             wanted.add("routing.jsonl" to DiagJson.ROUTING_META)
             wanted.add("weights.jsonl" to DiagJson.WEIGHTS_META)
+            // 每轮的整体状态(App/内核/组/采样器/采集文件健康度),一行一条
+            wanted.add("state.jsonl" to DiagJson.STATE_META)
         }
         if (store.selCrashes) wanted.add("crashes.jsonl" to DiagJson.CRASHES_META)
 
@@ -225,7 +229,7 @@ object DiagExporter {
         val diagDir = File(app.filesDir, "diag")
         var total = 0L
         if (store.selRouting) {
-            for (name in arrayOf("routing.jsonl", "weights.jsonl")) {
+            for (name in arrayOf("routing.jsonl", "weights.jsonl", "state.jsonl")) {
                 val file = File(diagDir, name)
                 if (file.isFile) total += file.length()
             }
@@ -255,6 +259,7 @@ object DiagExporter {
         // 只取尾部若干字节:分析用不到几十 MB 的历史,却会让脱敏与压缩白白烧 CPU
         val routingRaw = if (store.selRouting) readTail(File(diagDir, "routing.jsonl"), ROUTING_TAIL_BYTES) else null
         val weightsRaw = if (store.selRouting) readTail(File(diagDir, "weights.jsonl"), WEIGHTS_TAIL_BYTES) else null
+        val stateRaw = if (store.selRouting) readTail(File(diagDir, "state.jsonl"), STATE_TAIL_BYTES) else null
         val crashesRaw = if (store.selCrashes) readFile(File(diagDir, "crashes.jsonl")) else null
         // 只上传本程序自己产生的数据；不再收「用户指定的其他文件」(界面已移除该入口)
         val extras = emptyList<ExtraFile>()
@@ -293,6 +298,16 @@ object DiagExporter {
                 Part(
                     "weights.jsonl",
                     prepareJsonl(weightsRaw, DiagJson.WEIGHTS_META, redact, nodeNames),
+                    "routing",
+                    redacted = redact,
+                )
+            )
+        }
+        if (stateRaw != null) {
+            parts.add(
+                Part(
+                    "state.jsonl",
+                    prepareJsonl(stateRaw, DiagJson.STATE_META, redact, nodeNames),
                     "routing",
                     redacted = redact,
                 )
@@ -949,18 +964,7 @@ object DiagExporter {
         return out.toString()
     }
 
-    private fun nodeToken(name: String): String {
-        if (name.isEmpty()) return name
-        val digest = MessageDigest.getInstance("SHA-1").digest(name.toByteArray(Charsets.UTF_8))
-        val alphabet = "0123456789abcdef"
-        val hex = CharArray(6)
-        for (i in 0 until 3) {
-            val b = digest[i].toInt() and 0xff
-            hex[i * 2] = alphabet[b ushr 4]
-            hex[i * 2 + 1] = alphabet[b and 0x0f]
-        }
-        return "node-" + String(hex)
-    }
+    private fun nodeToken(name: String): String = DiagJson.nameToken(name)
 
     private fun unescapeJson(raw: String): String {
         if (!raw.contains('\\')) return raw
