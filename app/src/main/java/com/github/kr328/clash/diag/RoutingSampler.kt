@@ -195,6 +195,7 @@ class RoutingSampler private constructor(
                             chosenWeight = match.chosenWeight,
                             chosenDelayMs = match.chosenDelayMs,
                             altsTop3 = match.alts,
+                            chain = DiagJson.chainArray(conn.chains),
                         )
                     )
                 }
@@ -257,19 +258,36 @@ class RoutingSampler private constructor(
     private fun writeWeightsSnapshot() {
         val snap = heavy ?: return
         if (snap.weights.isEmpty()) return
+        // 启动/重启瞬间内核还没解析出组内成员,此时 /group/x/weights 返回空数组。
+        // 实测这种"全组同一次快照都为空"的情形被下游当成"策略组内没有任何节点"反复报 bug,
+        // 而其中两个组正常时各有 110 / 33 个成员。因此:
+        //   ① 全部组都空 → 整条快照丢掉,不落盘
+        //   ② 单个组这次空、上次非空 → 视为未就绪,沿用上次的成员列表
+        //   ③ 历史上一直是空的组(真·空组)照原样写空,保留真实信号
+        val rawAllEmpty = snap.weights.values.all { it.isEmpty() }
+        if (rawAllEmpty) return
+        val merged = LinkedHashMap<String, List<DiagJson.Ranked>>(snap.weights.size)
+        for ((group, list) in snap.weights) {
+            if (list.isNotEmpty()) {
+                merged[group] = list
+                continue
+            }
+            val prev = lastWeights?.get(group)
+            merged[group] = if (!prev.isNullOrEmpty()) prev else list
+        }
         // 实测:全量快照 8.4KB/次,每分钟写 = 12MB/天,比连接记录还大。
         // 连接记录本身已带 alts_top3(每分钟刷新的内存快照,细粒度够用),这里只做"参考底稿":
         //   ① 最快 5 分钟一次 ② 排名完全没变就跳过
         val now = SystemClock.elapsedRealtime()
         if (now - lastWeightsAt < WEIGHTS_SNAPSHOT_MS) return
-        if (snap.weights == lastWeights) return
+        if (merged == lastWeights) return
         lastWeightsAt = now
-        lastWeights = snap.weights
+        lastWeights = merged
         weightStore.appendAll(
             listOf(
                 DiagJson.weightsRecord(
                     ts = DiagJson.formatTs(System.currentTimeMillis()),
-                    groups = snap.weights,
+                    groups = merged,
                     proxies = snap.proxies,
                 )
             )
@@ -303,14 +321,21 @@ class RoutingSampler private constructor(
         val group = pickGroup(chains, node, snap) ?: return Match(null, null, null)
         val ranked = snap.weights[group]
         val cands = ArrayList<Cand>()
+        // 候选只能是"真节点":/proxies 里带 members 的是策略组(Select/UrlTest/Smart 等),
+        // 它们会作为成员出现在父组的 members 或 weights 里。实测一度有 19.2% 的 alts 条目是组名,
+        // 导致"实选 vs 候选最优"永远对不上,误选分析整套失效。
+        fun isGroup(name: String): Boolean =
+            (snap.proxies[name]?.members?.isNotEmpty() == true)
         if (!ranked.isNullOrEmpty()) {
             for (item in ranked) {
+                if (isGroup(item.node)) continue
                 val proxy = snap.proxies[item.node]
                 cands.add(Cand(item.node, item.weight, proxy?.lastDelayMs, proxy?.alive))
             }
         } else {
             val info = snap.proxies[group] ?: return Match(null, null, null)
             for (member in info.members) {
+                if (isGroup(member)) continue
                 val proxy = snap.proxies[member] ?: continue
                 cands.add(Cand(member, null, proxy.lastDelayMs, proxy.alive))
             }

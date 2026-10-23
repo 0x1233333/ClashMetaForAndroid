@@ -15,7 +15,7 @@ import java.util.TimeZone
 internal object DiagJson {
     /** 只放在 routing.jsonl 第一行。数据行不要带这份说明。 */
     const val ROUTING_META =
-        """{"_meta":"routing samples, one JSON per line","interval_s":10,"fields":{"ts":"ISO8601 local time","conn_id":"connection id","node":"sha1-hashed node name (node-<6 hex>)","target_class":"sha1 of destination host, never plaintext","down_bytes":"cumulative bytes down","up_bytes":"cumulative bytes up","down_rate":"recent down bytes/s","up_rate":"recent up bytes/s","age_s":"connection age seconds","idle_s":"seconds since last byte growth","idle_rounds":"consecutive sampling rounds without byte growth","grew":"bytes grew in this round","state":"active|stalled|dormant|nodata","stalled":"state == stalled (transfer observed, then 3+ rounds without growth, and not yet 18 rounds)","net_type":"wifi|cellular","screen":"on|off","chosen_weight":"weight of the selected node","alts_top3":"top-3 candidate nodes by weight with their weight/last_delay_ms/alive"}}"""
+        """{"_meta":"routing samples, one JSON per line","interval_s":10,"fields":{"ts":"ISO8601 local time","conn_id":"connection id","node":"sha1-hashed node name (node-<6 hex>)","chain":"sha1-hashed group chain of this connection (innermost first); 用来判定该流量是否落在 Smart 组内","target_class":"sha1 of destination host, never plaintext","down_bytes":"cumulative bytes down","up_bytes":"cumulative bytes up","down_rate":"recent down bytes/s","up_rate":"recent up bytes/s","age_s":"connection age seconds","idle_s":"seconds since last byte growth","idle_rounds":"consecutive sampling rounds without byte growth","grew":"bytes grew in this round","state":"active|stalled|dormant|nodata","stalled":"state == stalled (transfer observed, then 3+ rounds without growth, and not yet 18 rounds)","net_type":"wifi|cellular","screen":"on|off","chosen_weight":"weight of the selected node","alts_top3":"top-3 candidate nodes by weight with their weight/last_delay_ms/alive"}}"""
 
     /** 只放在 weights.jsonl 第一行。快照间隔与 RoutingSampler 的 5 分钟落盘一致。 */
     const val WEIGHTS_META =
@@ -171,6 +171,22 @@ internal object DiagJson {
         return head
     }
 
+    /**
+     * 连接经过的策略组链(按由内向外的顺序),不含节点自身。
+     * 目的:选路分析必须知道这条流量属于哪个组 —— 只记录 node 时无法判断它是否落在 Smart 组内,
+     * 也解释不了"高流量节点一次都没出现在权重快照里"这类现象。
+     */
+    fun chainArray(chains: List<String>): JSONArray? {
+        if (chains.size <= 1) return null
+        val arr = JSONArray()
+        for (i in 1 until chains.size) {
+            val raw = chains[i].trim()
+            if (raw.isEmpty()) continue
+            arr.put(raw)
+        }
+        return if (arr.length() > 0) arr else null
+    }
+
     fun formatTs(epochMs: Long): String {
         val fmt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
         val tz = TimeZone.getDefault()
@@ -211,11 +227,13 @@ internal object DiagJson {
         chosenWeight: Double?,
         chosenDelayMs: Int?,
         altsTop3: JSONArray?,
+        chain: JSONArray? = null,
     ): String {
         val obj = JSONObject()
         obj.put("ts", ts)
         obj.put("conn_id", connId)
         obj.put("node", node)
+        if (chain != null) obj.put("chain", chain)
         obj.put("target_class", targetClass)
         obj.put("net", net)
         obj.put("inbound", inbound)

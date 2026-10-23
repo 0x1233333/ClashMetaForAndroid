@@ -37,6 +37,8 @@ object DiagExporter {
     private const val HTTP_TIMEOUT_MS = 1500
     private val LOG_NAME = Regex("clash-(\\d+)\\.log")
     private val NODE_FIELD = Regex(""""node"\s*:\s*"((?:\\.|[^"\\])*)"""")
+    /** `"chain":["组A","组B"]` —— 组名同样只以 SHA-1 前 6 位离开设备。 */
+    private val CHAIN_FIELD = Regex("""\"chain\"\s*:\s*\[([^\]]*)\]""")
     private val YAML_NAME = Regex("""(?m)^\s*-?\s*name\s*:\s*(.+?)\s*$""")
     private val HOSTLIKE =
         Regex("""\b[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?+(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?+)+\b""")
@@ -195,11 +197,24 @@ object DiagExporter {
      * 第一行 `_meta` 是字段说明，原样保留。
      */
     fun redact(jsonl: String): String {
-        if (jsonl.isEmpty() || !jsonl.contains("\"node\"")) return jsonl
+        if (jsonl.isEmpty()) return jsonl
+        if (!jsonl.contains("\"node\"") && !jsonl.contains("\"chain\"")) return jsonl
         return preservingMeta(jsonl) { body ->
-            NODE_FIELD.replace(body) { match ->
+            val withNodes = NODE_FIELD.replace(body) { match ->
                 val name = unescapeJson(match.groupValues[1])
                 "\"node\":\"${nodeToken(name)}\""
+            }
+            // chain 里的组名同样要脱敏,否则"哪个策略组走了哪条出口"会以明文离开设备。
+            CHAIN_FIELD.replace(withNodes) { match ->
+                val inner = match.groupValues[1]
+                val hashed = inner.split(',')
+                    .map { it.trim() }
+                    .filter { it.length >= 2 && it.startsWith("\"") && it.endsWith("\"") }
+                    .joinToString(",") { tok ->
+                        val raw = unescapeJson(tok.substring(1, tok.length - 1))
+                        "\"${nodeToken(raw)}\""
+                    }
+                "\"chain\":[$hashed]"
             }
         }
     }

@@ -68,9 +68,36 @@ internal class DiagStore(
                 }
             }
             val prefix = if (!active.exists() || active.length() == 0L) metaBytes() else null
+            val body = payload.toByteArray(Charsets.UTF_8)
+            val before = if (active.exists()) active.length() else 0L
             FileOutputStream(active, true).use { out ->
                 if (prefix != null) out.write(prefix)
-                out.write(payload.toByteArray(Charsets.UTF_8))
+                out.write(body)
+            }
+            // 写入后校验落盘结果。实测曾出现文件长度不再增长(routing 卡在 72MiB 数天),
+            // 此时采集协程仍在跑、也仍在 append,但上传端每轮拿到的都是同一份旧文件,
+            // 于是数据静默断流而没有任何报错。发现没写进去就把旧文件移走重建一次。
+            val after = if (active.exists()) active.length() else 0L
+            val expect = before + body.size + (prefix?.size ?: 0)
+            if (after < expect) {
+                Log.w("diag: $fileName append not persisted (before=$before after=$after expect=$expect), rebuilding")
+                try {
+                    if (rotated.exists()) rotated.delete()
+                    if (!active.renameTo(rotated)) {
+                        FileOutputStream(active, false).use { }
+                    }
+                } catch (e: Exception) {
+                    Log.w("diag: rebuild $fileName failed: ${e.javaClass.simpleName}")
+                }
+                try {
+                    val p2 = metaBytes()
+                    FileOutputStream(active, true).use { out ->
+                        if (p2 != null) out.write(p2)
+                        out.write(body)
+                    }
+                } catch (e: Exception) {
+                    Log.w("diag: retry append $fileName failed: ${e.javaClass.simpleName}")
+                }
             }
         }
     }
