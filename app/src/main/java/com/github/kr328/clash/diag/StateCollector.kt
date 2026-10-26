@@ -35,6 +35,10 @@ internal class StateCollector(private val context: Context) {
 
     private val store = DiagStore(context, "state.jsonl", metaLine = DiagJson.STATE_META)
     private var lastLine: String? = null
+    /** 连续 /version 探测失败次数。启动瞬间内核还没起来只算 1 次,不会被当成掉线。 */
+    private var apiFailStreak = 0
+    /** 最近一次 /version 成功的时间;本进程内从未成功则为 null。 */
+    private var apiOkAt: String? = null
     private var lastCpuJiffies = -1L
     private var lastCpuAt = 0L
 
@@ -236,7 +240,20 @@ internal class StateCollector(private val context: Context) {
     private fun coreBlock(proxies: JSONObject?): JSONObject {
         val o = JSONObject()
         val version = httpGetJson("$CONTROLLER/version")
-        o.put("api_up", version != null)
+        val up = version != null
+        // 只有一次探测结果是不够的:服务刚启动、内核还在加载配置时 /version 也会失败,
+        // 下游据此报"内核不可达"是误报(实测开机后第一行快照 vpn_active=false、groups=[]、
+        // rounds=1,而同一分钟的权重快照里各组仍有 110/33/36 个成员)。
+        // 因此把"连续失败几次"和"最近一次可达时间"一起落盘,让持续性可以自证。
+        if (up) {
+            apiFailStreak = 0
+            apiOkAt = DiagJson.formatTs(System.currentTimeMillis())
+        } else {
+            apiFailStreak++
+        }
+        o.put("api_up", up)
+        o.put("api_fail_streak", apiFailStreak)
+        o.put("api_ok_at", apiOkAt ?: JSONObject.NULL)
         o.put("version", version?.optString("version")?.ifEmpty { null } ?: JSONObject.NULL)
         val configs = httpGetJson("$CONTROLLER/configs")
         if (configs != null) {

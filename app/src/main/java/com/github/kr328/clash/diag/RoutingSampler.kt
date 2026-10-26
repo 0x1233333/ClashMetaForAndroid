@@ -96,7 +96,7 @@ class RoutingSampler private constructor(
         scope?.cancel()
         synchronized(trackLock) { tracks.clear() }
         // 停止前补一条状态快照:下一次要排查"为什么那个时间段没数据",得有收尾那一刻的状态
-        try { maybeCaptureState(force = true) } catch (e: Exception) {
+        try { maybeCaptureState(force = true, trigger = "stop") } catch (e: Exception) {
             Log.w("diag: stop-state failed: ${e.javaClass.simpleName}")
         }
         heavy = null
@@ -133,7 +133,7 @@ class RoutingSampler private constructor(
     }
 
     /** 状态快照默认 30 分钟一次,状态没变就不落盘(StateCollector 自己比对)。 */
-    private fun maybeCaptureState(force: Boolean = false) {
+    private fun maybeCaptureState(force: Boolean = false, trigger: String? = null) {
         val now = SystemClock.elapsedRealtime()
         if (!force && lastStateAt != 0L && now - lastStateAt < STATE_INTERVAL_MS) return
         lastStateAt = now
@@ -148,7 +148,16 @@ class RoutingSampler private constructor(
             stalledRows = stalledRows,
             droppedRounds = droppedRounds,
         )
-        stateCollector.capture(if (rounds == 0L) "start" else "periodic", stats, force)
+        // 判据是「第几轮」而不是「是否成功取到过连接表」:
+        // 第一轮常常正好撞在内核加载配置的那几秒,/connections 拿不到会算成 dropped_rounds,
+        // 但 rounds 已经 +1,于是启动瞬间被记成 periodic —— 下游看到 api_up=false + periodic
+        // 就会当成"运行中掉线"。实测开机后那条快照就是这么来的(groups=[]、vpn_active=false、
+        // rounds=1、dropped_rounds=1),而同一分钟的权重快照里各组仍有 110/33/36 个成员。
+        // 反过来也不能用 lastOkAt:成功的一轮会先把它置上,于是第一轮成功也标成 periodic,
+        // start 只剩「第一轮失败」才会出现,语义正好相反。
+        // 收尾那条快照要标 stop:否则停采时内核可能正好在重启,api_up=false 又被当成「运行中掉线」
+        val why = trigger ?: if (rounds <= 1L) "start" else "periodic"
+        stateCollector.capture(why, stats, force)
     }
 
     private fun sampleOnce() {
