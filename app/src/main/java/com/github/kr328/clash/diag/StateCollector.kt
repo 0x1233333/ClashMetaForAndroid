@@ -35,12 +35,11 @@ internal class StateCollector(private val context: Context) {
 
     private val store = DiagStore(context, "state.jsonl", metaLine = DiagJson.STATE_META)
     private var lastLine: String? = null
-    /** 连续 /version 探测失败次数。启动瞬间内核还没起来只算 1 次,不会被当成掉线。 */
+    /**
+     * 连续 /version 探测失败次数。跟这个采样器走,隧道重启会新建实例并归零:
+     * 启动瞬间内核还没起来只算 1 次,不会把上一次隧道停止时的失败继承过来。
+     */
     private var apiFailStreak = 0
-    /** 最近一次 /version 成功的时间;本进程内从未成功则为 null。 */
-    private var apiOkAt: String? = null
-    private var lastCpuJiffies = -1L
-    private var lastCpuAt = 0L
 
     /** 采样器自身的运行统计,由 [RoutingSampler] 传入。 */
     data class SamplerStats(
@@ -67,9 +66,13 @@ internal class StateCollector(private val context: Context) {
             return false
         }
         if (line == null) return false
-        val body = line.substringAfter('\n')
-        if (!force && body == lastLine) return false
-        lastLine = body
+        // 去重键:去掉 ts 之后的整行。
+        // 这里原来写的是 line.substringAfter('\n') —— 行尾本来就有换行,取出来恒为空串,
+        // 于是同一个 StateCollector 实例写完第一条之后全部被判定"没变化",中段状态永远不落盘
+        // (实测每台设备只留了采样器出生/收尾那一两条)。
+        val sig = line.trimEnd('\n').replaceFirst(TS_PREFIX, "{")
+        if (!force && sig == lastLine) return false
+        lastLine = sig
         store.appendAll(listOf(line))
         return true
     }
@@ -86,7 +89,8 @@ internal class StateCollector(private val context: Context) {
         obj.put("power", powerBlock())
         val proxies = httpGetJson("$CONTROLLER/proxies")
         obj.put("core", coreBlock(proxies))
-        obj.put("groups", groupsBlock(proxies))
+        // 拿不到代理表就写 null。空数组会被当成「一台设备上没有任何策略组」。
+        if (proxies == null) obj.put("groups", JSONObject.NULL) else obj.put("groups", groupsBlock(proxies))
         obj.put("sampler", samplerBlock(stats))
         obj.put("files", filesBlock())
         return obj.toString() + "\n"
@@ -96,9 +100,9 @@ internal class StateCollector(private val context: Context) {
     private fun appBlock(): JSONObject {
         val o = JSONObject()
         o.put("version_name", versionName() ?: JSONObject.NULL)
-        o.put("version_code", versionCode())
+        o.put("version_code", versionCode() ?: JSONObject.NULL)
         o.put("pid", android.os.Process.myPid())
-        o.put("uptime_s", SystemClock.elapsedRealtime() / 1000)
+        o.put("uptime_s", processUptimeS())
         o.put("notifications_enabled", notificationsEnabled())
         o.put("vpn_service_prepared", vpnPrepared())
         return o
@@ -110,7 +114,7 @@ internal class StateCollector(private val context: Context) {
         null
     }
 
-    private fun versionCode(): Int = try {
+    private fun versionCode(): Int? = try {
         val info = context.packageManager.getPackageInfo(context.packageName, 0)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             info.longVersionCode.toInt()
@@ -119,7 +123,41 @@ internal class StateCollector(private val context: Context) {
             info.versionCode
         }
     } catch (e: Exception) {
-        0
+        null
+    }
+
+    /**
+     * 本进程启动至今的秒数,含休眠。
+     * [SystemClock.elapsedRealtime] 是手机开机时长,不能拿来当 App 运行了多久。
+     * API 24+ 用 [android.os.Process.getStartElapsedRealtime]（与 elapsedRealtime 同一时基）。
+     * 更老的系统读 /proc/self/stat 第 22 项 starttime（时钟滴答,不是第 15 项 stime）。
+     */
+    private fun processUptimeS(): Long {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            val start = android.os.Process.getStartElapsedRealtime()
+            return ((SystemClock.elapsedRealtime() - start) / 1000L).coerceAtLeast(0L)
+        }
+        return processUptimeFromProc()
+    }
+
+    private fun processUptimeFromProc(): Long = try {
+        val stat = File("/proc/self/stat").readText()
+        val close = stat.lastIndexOf(')')
+        if (close <= 0) {
+            -1L
+        } else {
+            val fields = stat.substring(close + 2).split(' ')
+            val startTicks = fields.getOrNull(19)?.toLongOrNull()
+            if (startTicks == null) {
+                -1L
+            } else {
+                val hz = clockTicksPerSec()
+                val startMs = startTicks * 1000L / hz
+                ((SystemClock.uptimeMillis() - startMs) / 1000L).coerceAtLeast(0L)
+            }
+        }
+    } catch (e: Exception) {
+        -1L
     }
 
     private fun notificationsEnabled(): Boolean = try {
@@ -168,7 +206,7 @@ internal class StateCollector(private val context: Context) {
     private fun processRssMb(): Long = try {
         val stat = File("/proc/self/statm").readText().trim().split(' ')
         val pages = stat.getOrNull(1)?.toLongOrNull() ?: 0L
-        pages * 4096L / (1024 * 1024)
+        pages * pageSizeBytes() / (1024 * 1024)
     } catch (e: Exception) {
         0L
     }
@@ -247,19 +285,24 @@ internal class StateCollector(private val context: Context) {
         // 因此把"连续失败几次"和"最近一次可达时间"一起落盘,让持续性可以自证。
         if (up) {
             apiFailStreak = 0
-            apiOkAt = DiagJson.formatTs(System.currentTimeMillis())
+            processApiOkAt = DiagJson.formatTs(System.currentTimeMillis())
         } else {
             apiFailStreak++
         }
         o.put("api_up", up)
         o.put("api_fail_streak", apiFailStreak)
-        o.put("api_ok_at", apiOkAt ?: JSONObject.NULL)
+        o.put("api_ok_at", processApiOkAt ?: JSONObject.NULL)
         o.put("version", version?.optString("version")?.ifEmpty { null } ?: JSONObject.NULL)
         val configs = httpGetJson("$CONTROLLER/configs")
         if (configs != null) {
-            o.put("mode", configs.optString("mode", "").ifEmpty { null } ?: JSONObject.NULL)
-            o.put("tun_enabled", configs.optBoolean("tun", false))
-            o.put("mixed_port", configs.optInt("mixed-port", 0))
+            if (configs.has("mode") && !configs.isNull("mode")) {
+                o.put("mode", configs.optString("mode", "").ifEmpty { null } ?: JSONObject.NULL)
+            }
+            // 缺字段时不要写成 false/0,否则下游分不清「关了」和「没读到」。
+            if (configs.has("tun") && !configs.isNull("tun")) o.put("tun_enabled", configs.optBoolean("tun"))
+            if (configs.has("mixed-port") && !configs.isNull("mixed-port")) {
+                o.put("mixed_port", configs.optInt("mixed-port"))
+            }
         }
         if (proxies != null) {
             val map = proxies.optJSONObject("proxies") ?: JSONObject()
@@ -289,10 +332,13 @@ internal class StateCollector(private val context: Context) {
     }
 
     // ── 策略组 ──────────────────────────────────────────────────────────────
-    /** 组名一律哈希后才落盘,和 routing 里 node 用的是同一个算法。 */
-    private fun groupsBlock(proxies: JSONObject?): JSONArray {
+    /**
+     * 只列有成员的策略组。组名一律哈希后才落盘。
+     * 调用方在 proxies == null 时不走这里,改写 groups:null。
+     * 无成员的条目不列入;原先的 empty 恒为 false,会让人以为「没有空组」。
+     */
+    private fun groupsBlock(proxies: JSONObject): JSONArray {
         val arr = JSONArray()
-        if (proxies == null) return arr
         val map = proxies.optJSONObject("proxies") ?: return arr
         val names = map.keys()
         while (names.hasNext()) {
@@ -303,7 +349,8 @@ internal class StateCollector(private val context: Context) {
             val g = JSONObject()
             g.put("name", DiagJson.nameToken(name))
             g.put("type", item.optString("type", ""))
-            g.put("now", DiagJson.nameToken(item.optString("now", "")))
+            val now = item.optString("now", "")
+            g.put("now", if (now.isEmpty()) JSONObject.NULL else DiagJson.nameToken(now))
             g.put("members", members.length())
             var alive = 0
             for (i in 0 until members.length()) {
@@ -316,7 +363,6 @@ internal class StateCollector(private val context: Context) {
                 }
             }
             g.put("alive", alive)
-            g.put("empty", members.length() == 0)
             arr.put(g)
         }
         return arr
@@ -338,7 +384,11 @@ internal class StateCollector(private val context: Context) {
         return o
     }
 
-    /** 自身进程 CPU 占用(毫秒/分钟),用 /proc/self/stat 的 utime+stime 差分算,不额外唤醒。 */
+    /**
+     * 自身进程 CPU 占用(毫秒/分钟),用 /proc/self/stat 的 utime+stime 差分。
+     * 进程内第一次没有基线,返回 -1。基线放在 companion:这条计数是进程级的,
+     * 而 [RoutingSampler.start] 每次隧道重启都会新建 StateCollector。
+     */
     private fun cpuMsPerMin(): Long {
         val jiffies = try {
             val stat = File("/proc/self/stat").readText()
@@ -353,10 +403,14 @@ internal class StateCollector(private val context: Context) {
             return -1
         }
         val now = SystemClock.elapsedRealtime()
-        val prev = lastCpuJiffies
-        val prevAt = lastCpuAt
-        lastCpuJiffies = jiffies
-        lastCpuAt = now
+        val prev: Long
+        val prevAt: Long
+        synchronized(cpuLock) {
+            prev = lastCpuJiffies
+            prevAt = lastCpuAt
+            lastCpuJiffies = jiffies
+            lastCpuAt = now
+        }
         if (prev < 0L || prevAt == 0L) return -1
         val spentMs = (jiffies - prev) * 10L          // USER_HZ=100 → 1 jiffy = 10ms
         val elapsedMs = now - prevAt
@@ -378,8 +432,8 @@ internal class StateCollector(private val context: Context) {
                 o.put("bytes", f.length())
                 val ageS = (now - f.lastModified()) / 1000
                 o.put("last_write_age_s", ageS)
-                // 超过 30 分钟没写 = 采集可能卡住(选路 10s 一条、权重 5 分钟一条)
-                o.put("stuck", name != "crashes.jsonl" && ageS > 1800)
+                val limit = stuckAfterS(name)
+                o.put("stuck", if (limit == null) JSONObject.NULL else ageS > limit)
             }
             arr.put(o)
         }
@@ -408,9 +462,43 @@ internal class StateCollector(private val context: Context) {
         }
     }
 
+    /**
+     * 年龄超过该秒数才标 stuck。null 表示这个文件的年龄不能代表采集卡住。
+     * routing 标称 10 秒一条,1800 秒已经远超采样抖动。
+     * weights 最快 5 分钟一条,但排名不变会整条跳过,1800 秒会把稳定期判成卡住;
+     * 放到 6 小时,只抓长时间完全停更。
+     * state 30 分钟一条且内容不变不写;crashes 是事件文件。二者都不标。
+     */
+    private fun stuckAfterS(name: String): Long? = when (name) {
+        "routing.jsonl" -> 1800L
+        "weights.jsonl" -> 6L * 3600L
+        else -> null
+    }
+
     private companion object {
+        /** 去重时剥掉行首的时间戳,让"内容相同"能被识别出来。 */
+        private val TS_PREFIX = Regex("""^\{"ts":"[^"]*",""")
         /** 与 RoutingSampler 共用同一个本地控制器地址。 */
         const val CONTROLLER = "http://127.0.0.1:9090"
         const val HTTP_TIMEOUT_MS = 1500
+
+        private val cpuLock = Any()
+        /** 进程级 CPU 基线。不能放在实例上,隧道重启会把实例丢掉。 */
+        @Volatile private var lastCpuJiffies = -1L
+        @Volatile private var lastCpuAt = 0L
+        /** 本进程最近一次 /version 成功的时间;从未成功则为 null。 */
+        @Volatile var processApiOkAt: String? = null
+
+        private fun clockTicksPerSec(): Long = try {
+            android.system.Os.sysconf(android.system.OsConstants._SC_CLK_TCK).coerceAtLeast(1L)
+        } catch (e: Exception) {
+            100L
+        }
+
+        private fun pageSizeBytes(): Long = try {
+            android.system.Os.sysconf(android.system.OsConstants._SC_PAGESIZE).coerceAtLeast(1L)
+        } catch (e: Exception) {
+            4096L
+        }
     }
 }

@@ -119,7 +119,7 @@ object DiagExporter {
         for ((name, meta) in wanted) {
             val bytes = picked[name] ?: continue
             var text = String(bytes, Charsets.UTF_8)
-            if (redact) text = scrubNames(text, nodeNames)
+            if (redact) text = hashPlainChains(scrubNames(text, nodeNames))
             val withMeta = ensureMeta(text, meta)
             finalParts.add(Part(name, withMeta.toByteArray(Charsets.UTF_8), name.substringBefore('.'), redacted = redact))
         }
@@ -208,18 +208,33 @@ object DiagExporter {
                 val name = unescapeJson(match.groupValues[1])
                 "\"node\":\"${nodeToken(name)}\""
             }
-            // chain 里的组名同样要脱敏,否则"哪个策略组走了哪条出口"会以明文离开设备。
-            CHAIN_FIELD.replace(withNodes) { match ->
-                val inner = match.groupValues[1]
-                val hashed = inner.split(',')
-                    .map { it.trim() }
-                    .filter { it.length >= 2 && it.startsWith("\"") && it.endsWith("\"") }
-                    .joinToString(",") { tok ->
-                        val raw = unescapeJson(tok.substring(1, tok.length - 1))
-                        "\"${nodeToken(raw)}\""
-                    }
-                "\"chain\":[$hashed]"
-            }
+            hashPlainChainsIn(withNodes)
+        }
+    }
+
+    /**
+     * 把 chain 数组里还是明文的组名换成 nameToken。
+     * 已经是 `node-` + 6 位十六进制的不再哈希，避免和 state.jsonl 的组名对不上。
+     * 游标打包不走 [redact]，只靠名字清单替换，组名经常不在清单里，所以这里单独做。
+     */
+    private fun hashPlainChains(jsonl: String): String {
+        if (!jsonl.contains("\"chain\"")) return jsonl
+        return preservingMeta(jsonl) { hashPlainChainsIn(it) }
+    }
+
+    private fun hashPlainChainsIn(body: String): String {
+        if (!body.contains("\"chain\"")) return body
+        return CHAIN_FIELD.replace(body) { match ->
+            val inner = match.groupValues[1]
+            val hashed = inner.split(',')
+                .map { it.trim() }
+                .filter { it.length >= 2 && it.startsWith("\"") && it.endsWith("\"") }
+                .joinToString(",") { tok ->
+                    val raw = unescapeJson(tok.substring(1, tok.length - 1))
+                    val token = if (DiagJson.isNameToken(raw)) raw else nodeToken(raw)
+                    "\"$token\""
+                }
+            "\"chain\":[$hashed]"
         }
     }
 

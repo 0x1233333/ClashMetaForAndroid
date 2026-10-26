@@ -15,7 +15,7 @@ import java.util.TimeZone
 internal object DiagJson {
     /** 只放在 routing.jsonl 第一行。数据行不要带这份说明。 */
     const val ROUTING_META =
-        """{"_meta":"routing samples, one JSON per line","interval_s":10,"fields":{"ts":"ISO8601 local time","conn_id":"connection id","node":"sha1-hashed node name (node-<6 hex>)","chain":"sha1-hashed group chain of this connection (innermost first); 用来判定该流量是否落在 Smart 组内","target_class":"sha1 of destination host, never plaintext","down_bytes":"cumulative bytes down","up_bytes":"cumulative bytes up","down_rate":"recent down bytes/s","up_rate":"recent up bytes/s","age_s":"connection age seconds","idle_s":"seconds since last byte growth","idle_rounds":"consecutive sampling rounds without byte growth","grew":"bytes grew in this round","state":"active|stalled|dormant|nodata","stalled":"state == stalled (transfer observed, then 3+ rounds without growth, and not yet 18 rounds)","net_type":"wifi|cellular","screen":"on|off","chosen_weight":"weight of the selected node","alts_top3":"top-3 candidate nodes by weight with their weight/last_delay_ms/alive"}}"""
+        """{"_meta":"routing samples, one JSON per line","interval_s":10,"fields":{"ts":"ISO8601 local time","conn_id":"connection id","node":"sha1-hashed node name (node-<6 hex>)","chain":"策略组链，由内向外，不含节点自身；写入前在设备端用 nameToken 哈希，每个元素都是 node- 加 6 位十六进制，磁盘不留明文组名","target_class":"sha1 of destination host, never plaintext","down_bytes":"cumulative bytes down","up_bytes":"cumulative bytes up","down_rate":"recent down bytes/s","up_rate":"recent up bytes/s","age_s":"connection age seconds","idle_s":"seconds since last byte growth","idle_rounds":"consecutive sampling rounds without byte growth","grew":"bytes grew in this round","state":"active|stalled|dormant|nodata","stalled":"state == stalled（见过传输后连续无增长达到 3 轮，且未到 6 轮；满 6 轮即 60 秒记为 dormant，不再算卡顿）","net_type":"wifi|cellular","screen":"on|off","chosen_weight":"weight of the selected node","alts_top3":"top-3 candidate nodes by weight with their weight/last_delay_ms/alive"}}"""
 
     /** 只放在 weights.jsonl 第一行。快照间隔与 RoutingSampler 的 5 分钟落盘一致。 */
     const val WEIGHTS_META =
@@ -173,8 +173,9 @@ internal object DiagJson {
 
     /**
      * 连接经过的策略组链(按由内向外的顺序),不含节点自身。
-     * 目的:选路分析必须知道这条流量属于哪个组 —— 只记录 node 时无法判断它是否落在 Smart 组内,
-     * 也解释不了"高流量节点一次都没出现在权重快照里"这类现象。
+     * 每个元素在这里就换成 [nameToken],满足 `node-` + 6 位十六进制。
+     * 导出端的名字清单只认 `"node"` 字段和配置里的名字,组名常常不在其中,
+     * 明文写进 jsonl 之后就脱敏不掉。
      */
     fun chainArray(chains: List<String>): JSONArray? {
         if (chains.size <= 1) return null
@@ -182,10 +183,15 @@ internal object DiagJson {
         for (i in 1 until chains.size) {
             val raw = chains[i].trim()
             if (raw.isEmpty()) continue
-            arr.put(raw)
+            arr.put(nameToken(raw))
         }
         return if (arr.length() > 0) arr else null
     }
+
+    private val NAME_TOKEN = Regex("^node-[0-9a-f]{6}$")
+
+    /** 已经是设备端哈希结果时导出端不得再哈希一次。 */
+    fun isNameToken(name: String): Boolean = NAME_TOKEN.matches(name)
 
     /**
      * 名字 → `node-<6 hex>`(SHA-1 前 6 位)。组名/节点名统一走它,
@@ -206,7 +212,7 @@ internal object DiagJson {
 
     /** 只放在 state.jsonl 第一行。 */
     const val STATE_META =
-        """{"_meta":"per-round state snapshots, one JSON per line","interval_s":1800,"fields":{"ts":"ISO8601 local time","type":"state","trigger":"start|periodic|stop","app":"version/pid/uptime/notification/vpn 准备状态","device":"机型/SDK/ABI/核数/内存/存储/进程 RSS","network":"当前网络类型/是否 VPN/是否计费/是否已验证","power":"亮屏/省电模式/电池优化白名单/电量/温度","core":"内核 API 是否可达/连续失败次数(api_fail_streak)/最近一次可达时间(api_ok_at)/版本/配置摘要/组数/节点数/存活节点数","groups":"每个策略组:脱敏组名/类型/当前选中(脱敏)/成员数/存活数/是否为空","sampler":"采样轮次/失败轮次/掉轮/平均与最大单轮耗时/自进程 CPU(毫秒/分钟)/行数","files":"采集文件大小/最后写入距今秒数/是否卡住(>1800s 未写)"}}"""
+        """{"_meta":"per-round state snapshots, one JSON per line","interval_s":1800,"fields":{"ts":"ISO8601 local time","type":"state","trigger":"start|periodic|stop","app":"version/pid/通知开关/vpn 准备状态；uptime_s=本进程启动至今的秒数（含休眠），不是手机开机时长；version_code 读取失败时为 null","device":"机型/SDK/ABI/核数/内存/存储/进程 RSS（RSS 按本机页大小换算）","network":"当前网络类型/是否 VPN/是否计费/是否已验证","power":"亮屏/省电模式/电池优化白名单/电量/温度","core":"api_up=本轮 /version 是否成功；api_fail_streak=当前采样器连续失败次数，隧道重启归零；api_ok_at=本进程最近一次成功的时间，从未成功为 null；version；mode/tun_enabled/mixed_port 只在配置里真有该字段时出现；group_count/node_count/node_alive 缺省表示代理表未知，不要当成 0","groups":"null=控制器不可达，组列表未知，不是没有组；空数组=控制器可达但没有带成员的策略组。元素：脱敏组名/类型/当前选中（脱敏，没有选中则为 null）/成员数/存活数。没有成员的条目不列入","sampler":"当前隧道的采样轮次/失败轮次/掉轮/平均与最大单轮耗时/行数，隧道重启归零；cpu_ms_per_min=本进程 CPU 毫秒每分钟，进程内第一条为 -1（还没有基线），同一进程内隧道重启不重置基线；last_ok_age_s=-1 表示还没有成功轮","files":"采集文件大小与最后写入距今秒数。stuck：routing.jsonl 超过 1800 秒为 true（标称 10 秒一条；完全没有连接时文件不增长，可能误报）；weights.jsonl 超过 21600 秒才为 true（最快 5 分钟一条，排名不变会跳过，1800 秒会把稳定期当成卡住）；state.jsonl 与 crashes.jsonl 为 null（状态不变不落盘，或本来就不是周期文件，不能用年龄判断卡住）"}}"""
 
     fun formatTs(epochMs: Long): String {
         val fmt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
