@@ -95,7 +95,8 @@ object DiagExporter {
         var rawTotal = 0L
         for ((name, _) in wanted) {
             val from = cursor[name] ?: 0L
-            if (budget <= 0L || UploadCursor.size(context, name) <= from) continue
+            // 只比大小会把"文件轮转后游标留在旧值"误判成"没有新数据",该文件从此不再上传。
+            if (budget <= 0L || !UploadCursor.needsUpload(from, UploadCursor.size(context, name))) continue
             val (bytes, end) = UploadCursor.readRange(context, name, from, budget)
             next[name] = end
             if (bytes.isEmpty()) continue

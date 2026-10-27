@@ -54,6 +54,16 @@ internal object UploadCursor {
     }
 
     /** 某文件当前长度(不存在按 0)。 */
+    /**
+     * 这个文件本轮是否还有东西要传。
+     *
+     * 关键在"游标大于文件长度"这一支:文件轮转(routing.jsonl 超过上限后滚成 .1、active 重建)
+     * 或用户清理之后,游标会停在旧的大值上。以前的调用方用 `size <= cursor` 直接跳过,
+     * 于是该文件永远不再上传 —— 实测手机端 routing 停在 72MiB / 125MiB 数天就是这个原因。
+     * 这种情况必须从头重传([readRange] 里已有 from>=len 归零的兜底)。
+     */
+    fun needsUpload(from: Long, size: Long): Boolean = from != size
+
     fun size(context: Context, name: String): Long {
         val f = File(File(context.filesDir, "diag"), name)
         return if (f.isFile) f.length() else 0L
