@@ -24,6 +24,16 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
 class AppSettingsActivity : BaseActivity<AppSettingsDesign>(), Behavior {
+    /**
+     * 回到前台时刷新「上次 / 下次上传」。
+     * 后台自动上传只写 TelegramStore、不碰界面(见 AutoUploader),若不在这里刷,
+     * 这一行会永远停在页面上一次渲染时的旧结果(实测:20:50 已传成功,界面仍显示 06:24 那个失败)。
+     */
+    override fun onStart() {
+        super.onStart()
+        design?.patchUploadStatus()
+    }
+
     override suspend fun main() {
         val design = AppSettingsDesign(
             this,

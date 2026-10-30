@@ -80,8 +80,10 @@ object AutoUploader {
 
         if (DiagExporter.sourcePayloadBytes(context) <= 0L) return Outcome.SkippedEmpty
         if (!busy.compareAndSet(false, true)) return Outcome.Busy
-            // 省电靠"择时":自动上传仅在充电或非计费网络(WiFi)时进行;手动触发(force)不受限
-            if (!force && !conditionsOk(context)) {
+            // 省电靠"择时":自动上传仅在充电或非计费网络(WiFi)时进行;手动触发(force)不受限。
+            // 兜底:超过 24 小时没成功传过就放宽到计费网络,避免包永远压在手机里传不出去。
+            val overdue24h = store.lastUploadAt <= 0L || now - store.lastUploadAt >= 24L * 60L * 60L * 1000L
+            if (!force && !conditionsOk(context, allowMetered = overdue24h)) {
                 store.lastUploadError = "waiting for charging or wifi"
                 busy.set(false)
                 return Outcome.SkippedConditions
@@ -103,7 +105,7 @@ object AutoUploader {
             store.lastAttemptAt = now
             if (force || stallNow) store.lastStallAttemptAt = now
 
-            Log.i("auto sendDocument bot<REDACTED> redact=true size=${zip.length()}")
+            Log.i("auto sendDocument bot<REDACTED> redact=true size=${zip.length()} ranges=${packed.ranges}")
             val result = try {
                 // 该函数是阻塞式调用,用 runBlocking 包住超时;整体封顶后可杜绝无限转圈
                 kotlinx.coroutines.runBlocking {
@@ -118,14 +120,15 @@ object AutoUploader {
             }
             return if (result.isSuccess) {
                 DiagExporter.commitCursor(context, packed)
+                val sentBytes = zip.length()   // 必须先取,delete() 之后 length() 恒为 0
                 zip.delete() // 上传成功即删,本地不留残留物
                 store.lastUploadAt = System.currentTimeMillis()
-                store.lastUploadBytes = zip.length()
+                store.lastUploadBytes = sentBytes
                 store.lastUploadError = ""
                 store.lastUploadRedacted = true
                 store.lastUploadItems = packed.items
                 store.lastStalledGeneration = RoutingSampler.stalledGeneration()
-                Outcome.Uploaded(zip.length())
+                Outcome.Uploaded(sentBytes)
             } else {
                 val reason = result.exceptionOrNull()?.message?.take(180) ?: "error"
                 store.lastUploadError = reason
@@ -153,17 +156,34 @@ object AutoUploader {
             false
         }
     }
-    /** 充电中 或 接在非计费网络(WiFi/以太网)上 —— 二者满足其一即可自动上传。 */
-    private fun conditionsOk(context: Context): Boolean {
+    /** 充电中 或 接在非计费网络(WiFi/以太网)上 —— 二者满足其一即可自动上传。
+     *  注意:VPN 起来后 activeNetwork 是 VPN 网络,它身上没有 NOT_METERED、
+     *  也拿不到底层 transport(实测 dumpsys 里 VPN 网络 caps 不含 NOT_METERED),
+     *  所以不能只看 activeNetwork —— 必须遍历全部网络看有没有 WiFi/以太网/非计费。
+     *  allowMetered 为 true 时(超过 24 小时没成功传过)放宽:计费网络也传,
+     *  否则用户不开 WiFi、不充电时诊断包会永远压在手机里。 */
+    private fun conditionsOk(context: Context, allowMetered: Boolean): Boolean {
         return try {
+            if (allowMetered) return true
             val battery = context.registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
             val status = battery?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1) ?: -1
             val charging = status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
                 status == android.os.BatteryManager.BATTERY_STATUS_FULL
             val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
-            val caps = cm?.getNetworkCapabilities(cm.activeNetwork)
-            val unmetered = caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED) == true
-            charging || unmetered
+            var freeNet = false
+            if (cm != null) {
+                for (n in cm.allNetworks) {
+                    val c = cm.getNetworkCapabilities(n) ?: continue
+                    if (c.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED) ||
+                        c.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) ||
+                        c.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET)
+                    ) {
+                        freeNet = true
+                        break
+                    }
+                }
+            }
+            charging || freeNet
         } catch (e: Exception) {
             true // 判断不了时不要卡住上传
         }

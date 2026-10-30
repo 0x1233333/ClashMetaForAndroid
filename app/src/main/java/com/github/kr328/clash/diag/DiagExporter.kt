@@ -225,17 +225,23 @@ object DiagExporter {
 
     private fun hashPlainChainsIn(body: String): String {
         if (!body.contains("\"chain\"")) return body
-        return CHAIN_FIELD.replace(body) { match ->
-            val inner = match.groupValues[1]
-            val hashed = inner.split(',')
-                .map { it.trim() }
-                .filter { it.length >= 2 && it.startsWith("\"") && it.endsWith("\"") }
-                .joinToString(",") { tok ->
-                    val raw = unescapeJson(tok.substring(1, tok.length - 1))
-                    val token = if (DiagJson.isNameToken(raw)) raw else nodeToken(raw)
-                    "\"$token\""
-                }
-            "\"chain\":[$hashed]"
+        // 按行处理:CHAIN_FIELD 若对整块 12 MB 文本做 replace,
+        // 每个匹配都要重建 Matcher 并把整块输入复制进 ICU —— 打包期间 CPU 与 RSS 会失控
+        // (实测上传窗口内两个进程各到 1.5 GB RSS、GC 每秒阻塞 30~39 ms)。
+        return body.split('\n').joinToString("\n") { line ->
+            if (!line.contains("\"chain\"")) return@joinToString line
+            CHAIN_FIELD.replace(line) { match ->
+                val inner = match.groupValues[1]
+                val hashed = inner.split(',')
+                    .map { it.trim() }
+                    .filter { it.length >= 2 && it.startsWith("\"") && it.endsWith("\"") }
+                    .joinToString(",") { tok ->
+                        val raw = unescapeJson(tok.substring(1, tok.length - 1))
+                        val token = if (DiagJson.isNameToken(raw)) raw else nodeToken(raw)
+                        "\"$token\""
+                    }
+                "\"chain\":[$hashed]"
+            }
         }
     }
 
