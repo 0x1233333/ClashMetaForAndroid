@@ -75,7 +75,9 @@ class ProxyActivity : BaseActivity<ProxyDesign>() {
                                 design.updateGroup(
                                     it.index,
                                     group.proxies,
-                                    group.type == "Selector",
+                                    // Smart 组也可以手点成员(选中即手动锁定,内核 Smart.Set 支持);
+                                    // 只让 Selector 可选会让"select→smart"转换后用户再也点不动。
+                                    group.type == "Selector" || group.type == "Smart",
                                     state,
                                     unorderedStates
                                 )
