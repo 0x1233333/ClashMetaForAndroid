@@ -12,6 +12,9 @@ import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
+// 与内核 smart.go 的 smartAutoName 保持一致:设成这个名字等于"解除手动锁定,回到自动"。
+private const val SMART_AUTO_ENTRY = "Smart - Select"
+
 class ProxyActivity : BaseActivity<ProxyDesign>() {
     override suspend fun main() {
         val mode = withClash { queryOverride(Clash.OverrideSlot.Session).mode }
@@ -72,9 +75,27 @@ class ProxyActivity : BaseActivity<ProxyDesign>() {
 
                                 state.now = group.now
 
+                                // smart 组的"自动"是一个虚拟成员(内核 Now() 返回 "Smart - Select",
+                                // 它不在 group.proxies 里),不补这一条,用户手点一个节点后在 UI 里
+                                // 就再也回不到自动。内核 Smart.Set 已支持用这个名字清空手动锁定。
+                                val members = if (group.type == "Smart") {
+                                    listOf(
+                                        Proxy(
+                                            name = SMART_AUTO_ENTRY,
+                                            title = "自动选择",
+                                            subtitle = "按实时质量在组内自动切换",
+                                            type = "Smart",
+                                            delay = -1,
+                                            isGroup = false,
+                                        )
+                                    ) + group.proxies
+                                } else {
+                                    group.proxies
+                                }
+
                                 design.updateGroup(
                                     it.index,
-                                    group.proxies,
+                                    members,
                                     // Smart 组也可以手点成员(选中即手动锁定,内核 Smart.Set 支持);
                                     // 只让 Selector 可选会让"select→smart"转换后用户再也点不动。
                                     group.type == "Selector" || group.type == "Smart",

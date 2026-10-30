@@ -53,6 +53,16 @@ func selectIsNodeOnly(g map[string]any, groups map[string]bool) bool {
 		}
 	}
 	if raw == nil {
+		// 用 proxy-provider 供节点的组(use: / include-all-proxies: / include-all-providers:)
+		// 在 RawConfig 阶段没有 proxies 列表,但它们同样只会是节点,不会有子组。
+		if _, hasUse := g["use"]; hasUse {
+			return true
+		}
+		for _, k := range []string{"include-all", "include-all-proxies", "include-all-providers"} {
+			if b, ok := g[k].(bool); ok && b {
+				return true
+			}
+		}
 		return false
 	}
 	for _, it := range raw {
@@ -67,7 +77,7 @@ func selectIsNodeOnly(g map[string]any, groups map[string]bool) bool {
 		}
 		// 内置策略名也不是真节点,别把它们交给 smart。
 		switch strings.ToUpper(s) {
-		case "DIRECT", "REJECT", "PASS", "COMPATIBLE", "GLOBAL":
+		case "DIRECT", "REJECT", "REJECT-DROP", "PASS", "PASS-RULE", "COMPATIBLE", "GLOBAL":
 			return false
 		}
 	}
@@ -440,6 +450,13 @@ func patchSmartAdapt(cfg *config.RawConfig, _ string) error {
 		}
 
 		name, _ := g["name"].(string)
+
+		// select→smart 的组原本没有 interval 字段,而 parser 会给非 select 组默认 300 秒
+		// (adapter/outboundgroup/parser.go:169-176),等于新开一轮 5 分钟整组测速。
+		// 这里显式落一个 600,避免转换后多出 26 个组的周期测速负载。
+		if _, ok := g["interval"]; !ok {
+			g["interval"] = smartGroupHealthInterval
+		}
 
 		// 放宽组级健康检查周期(见 smartGroupHealthInterval 注释):
 		// 订阅里的 300 秒会让内核每 5 分钟整组测一遍,熄屏也照跑。

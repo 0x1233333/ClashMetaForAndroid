@@ -70,7 +70,9 @@ func QueryProxyGroupNames(excludeNotSelectable bool) []string {
 
 	for _, p := range proxies {
 		if g, ok := p.Adapter().(outboundgroup.ProxyGroup); ok {
-			if !excludeNotSelectable || p.Type() == C.Selector {
+			// Smart 组同样要能出现在代理页:国家分组被 select→smart 转换后,
+			// 若这里只放行 Selector,打开"隐藏不可选组"就会整组消失(用户看不到也点不了)。
+			if !excludeNotSelectable || p.Type() == C.Selector || p.Type() == C.Smart {
 				if g.Hidden() {
 					continue
 				}
