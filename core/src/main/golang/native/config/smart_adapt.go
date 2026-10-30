@@ -33,6 +33,38 @@ const smartAdaptEnabled = true
 
 var smartAdaptFrom = map[string]bool{"url-test": true, "fallback": true, "load-balance": true}
 
+// selectIsNodeOnly 判断一个 select 组的成员是否**全是代理节点**(没有任何子组)。
+//
+// 为什么需要它:用户的订阅里国家/地区分组(🇯🇵 日本、🇺🇸 美国 …)几乎都是 select。
+// 这种组的语义是"用户选地区,程序在地区内换节点",但 select 永远不会自己换 ——
+// 实测主链路连续 55,200 个采样点 100% 停在同一个节点(两天没动),而那个节点
+// 下行中位只有 1 KB/s、卡顿率 21.3%。转成 smart 后:手点任意节点仍是手动锁定
+// (smart.go 的 Set/ForceSet),不点就按真实质量在组内自动轮换。
+// 成员里含子组的(如"节点选择"里放国家组)不动 —— 那层要保持用户手选地区。
+func selectIsNodeOnly(g map[string]any, groups map[string]bool) bool {
+	raw, ok := g["all"].([]any)
+	if !ok || len(raw) < 2 {
+		return false
+	}
+	for _, it := range raw {
+		s, ok := it.(string)
+		if !ok {
+			return false
+		}
+		s = strings.TrimSpace(s)
+		// 含子组的组不转:那层是"手选地区/手选策略"的入口。
+		if groups[s] {
+			return false
+		}
+		// 内置策略名也不是真节点,别把它们交给 smart。
+		switch strings.ToUpper(s) {
+		case "DIRECT", "REJECT", "PASS", "COMPATIBLE", "GLOBAL":
+			return false
+		}
+	}
+	return true
+}
+
 // smartGroupHealthInterval 是转换后的 smart 组保留的 url-test 健康检查周期(秒)。
 //
 // 订阅里这类组通常写 interval: 300(5 分钟),内核就对整组每个节点做一遍
@@ -353,9 +385,26 @@ func patchSmartAdapt(cfg *config.RawConfig, _ string) error {
 
 	converted := make([]string, 0, len(cfg.ProxyGroup))
 
+	// 组名单:成员全是"非组名"的 select 组 = 国家/地区分组(节点可能来自 proxy-providers,
+	// 所以不能拿 cfg.Proxy 判,只能用"是不是另一个组名"来判)。
+	groupNames := make(map[string]bool, len(cfg.ProxyGroup))
+	for _, pg := range cfg.ProxyGroup {
+		if n, ok := pg["name"].(string); ok {
+			groupNames[strings.TrimSpace(n)] = true
+		}
+	}
+
 	for _, g := range cfg.ProxyGroup {
 		t, _ := g["type"].(string)
-		if !smartAdaptFrom[strings.ToLower(strings.TrimSpace(t))] {
+		lt := strings.ToLower(strings.TrimSpace(t))
+		convert := smartAdaptFrom[lt]
+		if !convert && lt == "select" && selectIsNodeOnly(g, groupNames) {
+			// 国家/地区分组:用户选地区、程序在组内按质量换节点。
+			// select 永远不会自己换(实测一个组连续两天 100% 同一节点),
+			// 转成 smart 后仍可用 Set/ForceSet 手动锁定。
+			convert = true
+		}
+		if !convert {
 			continue
 		}
 
