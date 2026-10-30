@@ -42,8 +42,17 @@ var smartAdaptFrom = map[string]bool{"url-test": true, "fallback": true, "load-b
 // (smart.go 的 Set/ForceSet),不点就按真实质量在组内自动轮换。
 // 成员里含子组的(如"节点选择"里放国家组)不动 —— 那层要保持用户手选地区。
 func selectIsNodeOnly(g map[string]any, groups map[string]bool) bool {
-	raw, ok := g["all"].([]any)
-	if !ok || len(raw) < 2 {
+	// 订阅 YAML 里组的成员列表键名是 `proxies`;内核内部结构体里才叫 `all`。
+	// RawConfig 阶段拿到的是原始 map,所以两个键都要看 —— 曾经只认 `all`,
+	// 结果在真订阅上"成员全是节点"的国家分组一个都没匹配到(实测)。
+	var raw []any
+	for _, key := range []string{"proxies", "all"} {
+		if v, ok := g[key].([]any); ok && len(v) >= 2 {
+			raw = v
+			break
+		}
+	}
+	if raw == nil {
 		return false
 	}
 	for _, it := range raw {
