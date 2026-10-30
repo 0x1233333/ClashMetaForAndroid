@@ -174,9 +174,10 @@ object AutoUploader {
             if (cm != null) {
                 for (n in cm.allNetworks) {
                     val c = cm.getNetworkCapabilities(n) ?: continue
-                    // 必须 VALIDATED:Wi-Fi 已关联但没上网(认证页/无出口)时,
-                    // 只看 NOT_METERED/WIFI 会误判成"免费网络",实际流量从蜂窝出去。
-                    if (!c.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)) continue
+                    // 刻意不要求 NET_CAPABILITY_VALIDATED:VPN 起来后底层 Wi-Fi 常常丢掉这个标记,
+                    // 系统校验探针失败但实际能上网的 Wi-Fi 也会被排除 —— 那会让"自动上传"退化成
+                    // 只能充电时才传(用户最初的问题就是包传不上去)。12 小时一包约 500 KB,
+                    // 可用性优先于这点流量;超过 24 小时还有 allowMetered 兜底。
                     if (c.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED) ||
                         c.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) ||
                         c.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET)
