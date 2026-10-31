@@ -42,7 +42,7 @@ class SmartHealthModule(
         // 用户感受就是"用着用着网络卡一下"。内核自己已有基于真实流量的异常检测
         // (checkNodesStable/checkBlockedNodes,5~10 分钟一轮)兜底,所以这里不必 3 分钟一次。
         private const val INTERVAL_MS = 10 * 60 * 1000L
-        private const val METERED_INTERVAL_MS = 30 * 60 * 1000L
+        private const val METERED_INTERVAL_MS = 10 * 60 * 1000L
         private const val SCREEN_OFF_INTERVAL_MS = 60_000L
         private const val INITIAL_DELAY_MS = 20_000L
         // 整组测速实测 ≈5.0s(100+ 节点),原来的 5000ms 几乎每轮都必然"超时",
@@ -119,17 +119,39 @@ class SmartHealthModule(
     /**
      * 计费网络(移动数据)上把整组测速间隔拉长,避免周期性占满带宽;
      * Wi-Fi/以太网保持较短间隔。读取失败时退化为较长间隔(保守)。
+     *
+     * 注意:开 VPN 之后 activeNetwork 就是 VPN 网络,它身上没有 NOT_METERED、
+     * 也拿不到底层 transport(实测 dumpsys 里 VPN 网络 caps 不含 NOT_METERED),
+     * 所以只看 activeNetwork 会恒判为「计费」。这里改成:VPN 中或 caps 拿不到时,
+     * 遍历 allNetworks 找任一 WiFi/以太网/非计费且 VALIDATED 的底层网络 —— 找到就算非计费。
      */
     private fun currentIntervalMs(): Long {
         return try {
-            val network = connectivity.activeNetwork ?: return METERED_INTERVAL_MS
-            val capabilities = connectivity.getNetworkCapabilities(network)
-                ?: return METERED_INTERVAL_MS
+            val active = connectivity.activeNetwork
+            val caps = if (active != null) connectivity.getNetworkCapabilities(active) else null
 
-            if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED))
-                INTERVAL_MS
-            else
-                METERED_INTERVAL_MS
+            if (caps != null && !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+                // 普通情况下 activeNetwork 就是用户真正在用的网络,直接看它
+                if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED))
+                    INTERVAL_MS
+                else
+                    METERED_INTERVAL_MS
+            } else {
+                // VPN 中:看底层网络里有没有非计费的
+                var unmetered = false
+                for (network in connectivity.allNetworks) {
+                    val c = connectivity.getNetworkCapabilities(network) ?: continue
+                    if (c.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) continue
+                    val free = c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                        c.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) ||
+                        c.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+                    if (free && c.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+                        unmetered = true
+                        break
+                    }
+                }
+                if (unmetered) INTERVAL_MS else METERED_INTERVAL_MS
+            }
         } catch (e: Exception) {
             Log.w("SmartHealth: read network capability failed", e)
 

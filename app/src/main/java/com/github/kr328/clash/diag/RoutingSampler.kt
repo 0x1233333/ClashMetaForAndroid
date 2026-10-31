@@ -559,6 +559,12 @@ class RoutingSampler private constructor(
                 val sampler = RoutingSampler(context.applicationContext)
                 current = sampler
                 sampler.launch()
+                // 内存采集跟隧道同生命周期:隧道起来才写 mem.jsonl,停下就一条都不写
+                try {
+                    MemSampler.start(context.applicationContext)
+                } catch (e: Exception) {
+                    Log.w("diag: mem sampler start failed: ${e.javaClass.simpleName}")
+                }
             }
         }
 
@@ -566,6 +572,11 @@ class RoutingSampler private constructor(
         fun stop() {
             val sampler = synchronized(gate) {
                 current.also { current = null }
+            }
+            try {
+                MemSampler.stop()
+            } catch (e: Exception) {
+                Log.w("diag: mem sampler stop failed: ${e.javaClass.simpleName}")
             }
             sampler?.shutdown()
         }

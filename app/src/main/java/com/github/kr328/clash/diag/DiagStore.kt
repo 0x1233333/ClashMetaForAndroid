@@ -126,6 +126,19 @@ internal class DiagStore(
         /** 采集文件上限,与实例默认值保持一致。 */
         private const val CAP: Long = 200L * 1024L * 1024L
 
+        /** mem 系列单文件 32MB,必须与 [com.github.kr328.clash.diag.MemSampler] 里的 CAP_BYTES 一致。 */
+        private const val MEM_CAP: Long = 32L * 1024L * 1024L
+
+        /** 启动自愈要覆盖的全部采集文件及其上限。 */
+        private val CAPS: Map<String, Long> = linkedMapOf(
+            "routing.jsonl" to CAP,
+            "weights.jsonl" to CAP,
+            "state.jsonl" to CAP,
+            "crashes.jsonl" to CAP,
+            "mem.jsonl" to MEM_CAP,
+            "mem_events.jsonl" to MEM_CAP,
+        )
+
         /**
          * 启动自愈:把超过上限的采集文件截断。
          * 必须在 App 启动时无条件调用 —— 只写在实例 init 里不够,因为实例要等隧道起来才构造,
@@ -134,10 +147,10 @@ internal class DiagStore(
         @JvmStatic
         fun selfHealAll(context: Context) {
             val dir = File(context.applicationContext.filesDir, "diag")
-            for (name in listOf("routing.jsonl", "weights.jsonl", "state.jsonl", "crashes.jsonl")) {
+            for ((name, cap) in CAPS) {
                 try {
                     val f = File(dir, name)
-                    if (f.isFile && f.length() >= CAP) {
+                    if (f.isFile && f.length() >= cap) {
                         Log.w("diag: $name over cap at startup (${f.length()} bytes), truncating")
                         FileOutputStream(f, false).use { }
                     }

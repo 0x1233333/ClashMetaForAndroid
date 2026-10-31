@@ -1,5 +1,6 @@
 package com.github.kr328.clash.diag
 
+import com.github.kr328.clash.common.log.Log
 import android.content.Context
 import android.os.Build
 import android.os.PowerManager
@@ -58,9 +59,13 @@ object DiagExporter {
         "chosen_weight", "chosen_delay_ms", "alts_top3", "last_delay_ms",
         "android_version", "sdk", "model", "abi", "version_name",
         "kernel_version", "root", "power_save", "schema",
+        "app_rss_kb", "bg_rss_kb", "app_hwm_kb", "bg_hwm_kb", "app_anon_kb", "bg_anon_kb",
+        "app_swap_kb", "bg_swap_kb", "sys_avail_mb", "screen_on", "charging", "vpn_up", "conns",
+        "core_alloc_mb", "core_heap_inuse_mb", "core_sys_mb", "core_num_gc", "core_pause_ms",
+        "note", "evt", "rss_kb", "hwm_kb", "anon_kb", "delta_rss_kb", "extra",
         "_meta", "interval_s", "fields",
     )
-    private val ITEM_ORDER = listOf("routing", "env", "kernel_log", "crashes", "extra")
+    private val ITEM_ORDER = listOf("routing", "mem", "mem_events", "env", "kernel_log", "crashes", "extra")
 
     data class Packed(val file: File, val items: String)
 
@@ -70,6 +75,8 @@ object DiagExporter {
         val items: String,
         val ranges: Map<String, Long>,
         val rawBytes: Long,
+        /** 这些文件的游标已越过文件末尾(轮转/清理), 提交时要允许回退到 0, 否则永远重传 */
+        val resets: Set<String> = emptySet(),
     )
 
     /**
@@ -87,22 +94,43 @@ object DiagExporter {
             wanted.add("weights.jsonl" to DiagJson.WEIGHTS_META)
             // 每轮的整体状态(App/内核/组/采样器/采集文件健康度),一行一条
             wanted.add("state.jsonl" to DiagJson.STATE_META)
+            // 内存序列与内存事件(打包/上传/峰值)。数量级很小(0.4MB/天),跟 routing 开关一起走。
+            wanted.add("mem.jsonl" to DiagJson.MEM_META)
+            wanted.add("mem_events.jsonl" to DiagJson.MEM_EVENTS_META)
         }
         if (store.selCrashes) wanted.add("crashes.jsonl" to DiagJson.CRASHES_META)
+
+        // 小文件优先:大文件(routing 有十几 MB 积压)会把整块预算吃光,
+        // 排在后面的 mem/state/crashes 就永远轮不到 —— 按当前大小升序打包。
+        val ordered = wanted.sortedBy { UploadCursor.size(context, it.first) }
 
         val picked = LinkedHashMap<String, ByteArray>()
         var budget = UploadCursor.CHUNK_BYTES
         var rawTotal = 0L
-        for ((name, _) in wanted) {
+        val resets = HashSet<String>()
+        for ((name, _) in ordered) {
             val from = cursor[name] ?: 0L
+            val size = UploadCursor.size(context, name)
+            // 游标越过文件末尾 = 文件轮转过/被重建:标记为可回退,并从头读
+            if (size > 0L && from >= size && from > 0L) {
+                resets.add(name)
+                Log.w("diag: cursor reset $name from=$from size=$size")
+            }
             // 只比大小会把"文件轮转后游标留在旧值"误判成"没有新数据",该文件从此不再上传。
-            if (budget <= 0L || !UploadCursor.needsUpload(from, UploadCursor.size(context, name))) continue
+            if (budget <= 0L || !UploadCursor.needsUpload(from, size)) continue
             val (bytes, end) = UploadCursor.readRange(context, name, from, budget)
             next[name] = end
             if (bytes.isEmpty()) continue
             picked[name] = bytes
             rawTotal += bytes.size
             budget -= bytes.size
+        }
+
+        // 取证用:打包时每个待传文件的 (游标, 实际大小), 用来区分"没配进 wanted"与"文件是空的"
+        try {
+            Log.w("diag: pack wanted=" + wanted.joinToString(",") { it.first } +
+                " sizes=" + wanted.joinToString(",") { "${it.first}:${cursor[it.first] ?: 0L}/${UploadCursor.size(context, it.first)}" })
+        } catch (e: Exception) {
         }
 
         // 名字清单:配置 + 持久化 + 本轮数据(全部运行时读取,代码里无具体名字)
@@ -141,7 +169,7 @@ object DiagExporter {
         finalParts.add(Part("env.json", env.toByteArray(Charsets.UTF_8), "env", redacted = redact))
 
         val zip = writeZip(context, finalParts)
-        return Chunk(zip, itemCsv(finalParts), next, rawTotal)
+        return Chunk(zip, itemCsv(finalParts), next, rawTotal, resets)
     }
 
     /** 上传成功后推进游标(游标只增不减)。 */
@@ -149,7 +177,8 @@ object DiagExporter {
         val cursor = UploadCursor.read(context)
         for ((k, v) in chunk.ranges) {
             val old = cursor[k] ?: 0L
-            if (v > old) cursor[k] = v
+            // 轮转后允许回退:否则游标越过文件长度的文件会每轮从头重读、永远追不上
+            if (v > old || k in chunk.resets) cursor[k] = v
         }
         UploadCursor.write(context, cursor)
     }
@@ -251,7 +280,7 @@ object DiagExporter {
         val diagDir = File(app.filesDir, "diag")
         var total = 0L
         if (store.selRouting) {
-            for (name in arrayOf("routing.jsonl", "weights.jsonl", "state.jsonl")) {
+            for (name in arrayOf("routing.jsonl", "weights.jsonl", "state.jsonl", "mem.jsonl", "mem_events.jsonl")) {
                 val file = File(diagDir, name)
                 if (file.isFile) total += file.length()
             }

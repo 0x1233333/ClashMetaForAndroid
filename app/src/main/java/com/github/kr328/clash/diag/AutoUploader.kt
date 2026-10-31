@@ -89,6 +89,8 @@ object AutoUploader {
                 return Outcome.SkippedConditions
             }
         try {
+            // 打包前/后各记一条,配合 mem.jsonl 就能对上「那一刻内存多少、包多大」
+            try { MemSampler.markEvent(context, "pack_start") } catch (_: Exception) {}
             val packed = try {
                 DiagExporter.packChunk(context, redact = true)
             } catch (e: Exception) {
@@ -97,6 +99,9 @@ object AutoUploader {
                 return Outcome.Failed(reason)
             }
             val zip = packed.file
+            try {
+                MemSampler.markEvent(context, "pack_end", "bytes=${zip.length()} ranges=${packed.ranges}")
+            } catch (_: Exception) {}
             if (zip.length() <= 0L || zip.length() > MAX_ZIP_BYTES) {
                 zip.delete()
                 return Outcome.SkippedEmpty
@@ -106,6 +111,9 @@ object AutoUploader {
             if (force || stallNow) store.lastStallAttemptAt = now
 
             Log.i("auto sendDocument bot<REDACTED> redact=true size=${zip.length()} ranges=${packed.ranges}")
+            try {
+                MemSampler.markEvent(context, "upload_start", "size=${zip.length()}")
+            } catch (_: Exception) {}
             val result = try {
                 // 该函数是阻塞式调用,用 runBlocking 包住超时;整体封顶后可杜绝无限转圈
                 kotlinx.coroutines.runBlocking {
@@ -118,6 +126,13 @@ object AutoUploader {
             } catch (e: Exception) {
                 Result.failure(e)
             }
+            try {
+                MemSampler.markEvent(
+                    context,
+                    "upload_end",
+                    "ok=${result.isSuccess} size=${zip.length()} err=${result.exceptionOrNull()?.message?.take(120) ?: ""}",
+                )
+            } catch (_: Exception) {}
             return if (result.isSuccess) {
                 DiagExporter.commitCursor(context, packed)
                 val sentBytes = zip.length()   // 必须先取,delete() 之后 length() 恒为 0

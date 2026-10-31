@@ -30,6 +30,15 @@ class MainApplication : Application() {
     override fun onCreate() {
         super.onCreate()
 
+        // 主进程也起一个内存采集:跨进程读 /proc/<pid>/status 在 Android 11+ 被拦,
+        // 只在 :background 里采的话, 主进程那一侧的 RSS 永远是 null。
+        // 每行带 self 字段区分来源;隧道没起时自动跳过内核探测,开销可以忽略。
+        try {
+            com.github.kr328.clash.diag.MemSampler.start(this)
+        } catch (e: Exception) {
+        }
+
+
         // 记下这一条,再把同一个异常交给原来的 handler。记录失败也不能把崩溃吃掉。
         val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->

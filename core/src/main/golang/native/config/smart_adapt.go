@@ -89,9 +89,13 @@ func selectIsNodeOnly(g map[string]any, groups map[string]bool) bool {
 // 订阅里这类组通常写 interval: 300(5 分钟),内核就对整组每个节点做一遍
 // "DNS 解析 + TLS 握手 + HTTP 请求",**熄屏也照跑** —— 在移动网络上表现为
 // "用一段时间卡一下",而 App 侧的任何省电/门控都管不到它(那不是 App 发的)。
-// smart 组自身有 10~15 分钟的稳定性/失效检测,且节点真实失败会立刻进入存储统计,
-// 被选择器即时绕开,所以组级健康检查没必要每 5 分钟一次。
-const smartGroupHealthInterval = 600
+// smart 组自身还有 10~15 分钟的稳定性/失效检测,且节点真实失败会立刻进入存储统计,
+// 被选择器即时绕开,所以组级健康检查不必更密。
+//
+// 2026-10-31 调到 300: 与路由器模板(generate template 默认 300)对齐 —— 600 会让
+// "订阅里的 300 被抬到 600",与模板行为不一致;而排序现在用 LastDelayForTestUrl,
+// 延迟太旧会让新加的延迟因子失真。
+const smartGroupHealthInterval = 300
 
 // Model.bin 的期望哈希(与 //go:embed 进来的是同一份文件;用来在装盘时自检)。
 const smartModelSHA256 = "23633022a815fb34e510befe1c176ba50af3ced48f08b172454f4cd6b8327788"
@@ -434,6 +438,20 @@ func patchSmartAdapt(cfg *config.RawConfig, _ string) error {
 		// network dependency (GitHub download) that can stall startup for ~80s.
 		delete(g, "prefer-asn")
 
+		// 与路由器模板(generate)对齐的一组默认参数:
+		//   tolerance=0      不用内核的"打平"阈值(它会让组赖在当前节点上);
+		//                    防抖交给 filterProxies 的 5% eff 死区, 这里只求"慢节点必须让位";
+		//                    与 filterProxies 里新加的 5% 死区互补 —— 一个管毫秒差, 一个管权重百分差。
+		//   sample-rate=1.0  全量采集。样本不足时 weight.go 直接返 0(样本<2), 采集不满 ⇒
+		//                    永远没有历史权重 ⇒ 新节点进不了候选(以前就是这样卡死的)。
+		//   collectdata=true 打开采集, 让冷启动节点尽快攒出历史权重。
+		// 类型必须写对: 这几个键会被后续按 group tag 解码进结构体字段,
+		// sample-rate 存成 int 会让整组解码失败掉回默认值, 所以显式用 float64。
+		// 放在 tuning 之前 ⇒ 用户覆写里有 smart-options 时以覆写为准。
+		g["tolerance"] = 0
+		g["sample-rate"] = 1.0
+		g["collectdata"] = true
+
 		// user tuning from the persist override file, e.g.
 		// {"smart-options": {"tolerance": 50, "policy-priority": "IEPL:2.0;家宽:0.5"}}
 		if tuning.Tolerance > 0 {
@@ -445,21 +463,23 @@ func patchSmartAdapt(cfg *config.RawConfig, _ string) error {
 		if tuning.SampleRate > 0 {
 			g["sample-rate"] = tuning.SampleRate
 		}
-		if tuning.CollectData != nil && *tuning.CollectData {
-			g["collectdata"] = true
+		// 覆写显式写了 true/false 就照覆写的来(以前只会应用 true, 写 false 等于没写,
+		// 在默认已经打开采集之后那等于无法关闭)。
+		if tuning.CollectData != nil {
+			g["collectdata"] = *tuning.CollectData
 		}
 
 		name, _ := g["name"].(string)
 
 		// select→smart 的组原本没有 interval 字段,而 parser 会给非 select 组默认 300 秒
-		// (adapter/outboundgroup/parser.go:169-176),等于新开一轮 5 分钟整组测速。
-		// 这里显式落一个 600,避免转换后多出 26 个组的周期测速负载。
+		// (adapter/outboundgroup/parser.go:169-176),等于新开一轮整组测速。
+		// 这里显式落一个 smartGroupHealthInterval(300, 与路由器模板一致)。
 		if _, ok := g["interval"]; !ok {
 			g["interval"] = smartGroupHealthInterval
 		}
 
-		// 放宽组级健康检查周期(见 smartGroupHealthInterval 注释):
-		// 订阅里的 300 秒会让内核每 5 分钟整组测一遍,熄屏也照跑。
+		// 抬到 smartGroupHealthInterval: 更密的测速只会白烧电, 更稀会让延迟因子失真。
+		// 订阅里的 300 秒本来就是模板默认值, 低于 300 的才需要抬。
 		switch v := g["interval"].(type) {
 		case int:
 			if v < smartGroupHealthInterval {
