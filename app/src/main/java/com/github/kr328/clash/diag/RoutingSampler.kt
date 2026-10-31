@@ -555,6 +555,8 @@ class RoutingSampler private constructor(
         @JvmStatic
         fun start(context: Context) {
             synchronized(gate) {
+            if (!DiagConfig.ENABLED) return
+
                 if (current != null) return
                 val sampler = RoutingSampler(context.applicationContext)
                 current = sampler

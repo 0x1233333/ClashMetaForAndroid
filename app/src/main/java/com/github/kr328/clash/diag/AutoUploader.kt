@@ -42,6 +42,8 @@ object AutoUploader {
     }
 
     fun tick(context: Context) {
+        if (!DiagConfig.ENABLED) return
+
         val store = TelegramStore(context)
         if (store.botToken.trim().isEmpty()) return
         if (!store.autoUpload && !store.uploadOnStall) return
@@ -57,6 +59,8 @@ object AutoUploader {
     private fun keys(): String = "$auto_upload $upload_interval $upload_on_stall $last_upload"
 
     fun uploadNow(context: Context): Outcome {
+        if (!DiagConfig.ENABLED) return Outcome.NotConfigured
+
         return upload(context, force = true)
     }
 

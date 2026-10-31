@@ -42,6 +42,7 @@ class AppSettingsActivity : BaseActivity<AppSettingsDesign>(), Behavior {
             this,
             clashRunning,
             ::onHideIconChange,
+            com.github.kr328.clash.diag.DiagConfig.ENABLED,
         )
 
         setContentDesign(design)

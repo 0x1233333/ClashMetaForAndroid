@@ -100,6 +100,8 @@ object MemSampler {
     @JvmStatic
     fun start(context: Context) {
         val app = context.applicationContext
+        if (!DiagConfig.ENABLED) return
+
         synchronized(gate) {
             if (running) return
             appContext = app

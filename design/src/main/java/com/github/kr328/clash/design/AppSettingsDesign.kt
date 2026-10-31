@@ -30,6 +30,8 @@ class AppSettingsDesign(
     behavior: Behavior,
     running: Boolean,
     onHideIconChange: (hide: Boolean) -> Unit,
+    /** 诊断采集总开关。false = 发行版: 整个 Telegram/上传/预览区块不渲染。 */
+    private val diagEnabled: Boolean = true,
 ) : Design<AppSettingsDesign.Request>(context) {
     enum class Request {
         ReCreateAllActivities,
@@ -143,170 +145,172 @@ class AppSettingsDesign(
                 enabled = !running
             }
 
-            category(R.string.telegram)
+            if (diagEnabled) {
+                category(R.string.telegram)
 
-            tips(R.string.tg_settings_hint)
+                tips(R.string.tg_settings_hint)
 
-            val extraViews = ArrayList<View>()
+                val extraViews = ArrayList<View>()
 
-            fun showTelegramExtras(show: Boolean) {
-                val vis = if (show) View.VISIBLE else View.GONE
-                extraViews.forEach { it.visibility = vis }
-            }
+                fun showTelegramExtras(show: Boolean) {
+                    val vis = if (show) View.VISIBLE else View.GONE
+                    extraViews.forEach { it.visibility = vis }
+                }
 
-            val tokenHolder = object {
-                var botToken: String
-                    get() = telegram.botToken
-                    set(value) {
-                        telegram.botToken = value
-                        launch(Dispatchers.Main) {
-                            showTelegramExtras(value.trim().isNotEmpty())
-                            patchUploadStatus()
+                val tokenHolder = object {
+                    var botToken: String
+                        get() = telegram.botToken
+                        set(value) {
+                            telegram.botToken = value
+                            launch(Dispatchers.Main) {
+                                showTelegramExtras(value.trim().isNotEmpty())
+                                patchUploadStatus()
+                            }
+                        }
+                }
+
+                editableText(
+                    value = tokenHolder::botToken,
+                    adapter = trimmedText,
+                    title = R.string.bot_token,
+                    icon = R.drawable.ic_baseline_key,
+                    empty = R.string.not_set,
+                    maskSummary = true,
+                )
+
+                editableText(
+                    value = telegram::chatId,
+                    adapter = trimmedText,
+                    title = R.string.chat_id,
+                    icon = R.drawable.ic_baseline_assignment,
+                    empty = R.string.not_set,
+                )
+
+                category(R.string.upload_selection)
+
+                switch(
+                    value = telegram::selRouting,
+                    icon = R.drawable.ic_baseline_domain,
+                    title = R.string.sel_routing,
+                    summary = R.string.sel_routing_summary,
+                )
+
+                switch(
+                    value = telegram::selEnv,
+                    icon = R.drawable.ic_baseline_info,
+                    title = R.string.sel_env,
+                    summary = R.string.sel_env_summary,
+                )
+
+                switch(
+                    value = telegram::selKernelLog,
+                    icon = R.drawable.ic_baseline_assignment,
+                    title = R.string.sel_kernel_log,
+                    summary = R.string.sel_kernel_log_summary,
+                ) {
+                    listener = OnChangedListener {
+                        // 只在勾上时拉起采集。取消勾选不发停止。
+                        if (telegram.selKernelLog) {
+                            requests.trySend(Request.StartKernelLog)
                         }
                     }
-            }
+                }
 
-            editableText(
-                value = tokenHolder::botToken,
-                adapter = trimmedText,
-                title = R.string.bot_token,
-                icon = R.drawable.ic_baseline_key,
-                empty = R.string.not_set,
-                maskSummary = true,
-            )
+                switch(
+                    value = telegram::selCrashes,
+                    icon = R.drawable.ic_baseline_flash_on,
+                    title = R.string.sel_crashes,
+                    summary = R.string.sel_crashes_summary,
+                )
 
-            editableText(
-                value = telegram::chatId,
-                adapter = trimmedText,
-                title = R.string.chat_id,
-                icon = R.drawable.ic_baseline_assignment,
-                empty = R.string.not_set,
-            )
-
-            category(R.string.upload_selection)
-
-            switch(
-                value = telegram::selRouting,
-                icon = R.drawable.ic_baseline_domain,
-                title = R.string.sel_routing,
-                summary = R.string.sel_routing_summary,
-            )
-
-            switch(
-                value = telegram::selEnv,
-                icon = R.drawable.ic_baseline_info,
-                title = R.string.sel_env,
-                summary = R.string.sel_env_summary,
-            )
-
-            switch(
-                value = telegram::selKernelLog,
-                icon = R.drawable.ic_baseline_assignment,
-                title = R.string.sel_kernel_log,
-                summary = R.string.sel_kernel_log_summary,
-            ) {
-                listener = OnChangedListener {
-                    // 只在勾上时拉起采集。取消勾选不发停止。
-                    if (telegram.selKernelLog) {
-                        requests.trySend(Request.StartKernelLog)
+                clickable(
+                    title = R.string.preview_upload,
+                    icon = R.drawable.ic_baseline_info,
+                ) {
+                    clicked {
+                        requests.trySend(Request.PreviewUpload)
                     }
                 }
-            }
 
-            switch(
-                value = telegram::selCrashes,
-                icon = R.drawable.ic_baseline_flash_on,
-                title = R.string.sel_crashes,
-                summary = R.string.sel_crashes_summary,
-            )
-
-            clickable(
-                title = R.string.preview_upload,
-                icon = R.drawable.ic_baseline_info,
-            ) {
-                clicked {
-                    requests.trySend(Request.PreviewUpload)
-                }
-            }
-
-            clickable(
-                title = R.string.upload_explain,
-                icon = R.drawable.ic_baseline_info,
-            ) {
-                clicked {
-                    launch {
-                        showTextPage(
-                            R.string.upload_explain,
-                            context.getString(R.string.upload_explain_body),
-                        )
+                clickable(
+                    title = R.string.upload_explain,
+                    icon = R.drawable.ic_baseline_info,
+                ) {
+                    clicked {
+                        launch {
+                            showTextPage(
+                                R.string.upload_explain,
+                                context.getString(R.string.upload_explain_body),
+                            )
+                        }
                     }
                 }
-            }
 
-            val autoPref = switch(
-                value = telegram::autoUpload,
-                icon = R.drawable.ic_baseline_publish,
-                title = R.string.auto_upload,
-                summary = R.string.auto_upload_summary,
-            ) {
-                listener = OnChangedListener { patchUploadStatus() }
-            }
-            extraViews.add(autoPref.view)
-
-            val intervalPref = selectableList(
-                value = telegram::uploadInterval,
-                values = TelegramStore.UploadInterval.values(),
-                valuesText = arrayOf(
-                    R.string.upload_interval_6h,
-                    R.string.upload_interval_12h,
-                    R.string.upload_interval_24h,
-                ),
-                icon = R.drawable.ic_baseline_update,
-                title = R.string.upload_interval,
-            ) {
-                listener = OnChangedListener { patchUploadStatus() }
-            }
-            extraViews.add(intervalPref.view)
-
-            val stallPref = switch(
-                value = telegram::uploadOnStall,
-                icon = R.drawable.ic_baseline_flash_on,
-                title = R.string.upload_on_stall,
-                summary = R.string.upload_on_stall_summary,
-            )
-            extraViews.add(stallPref.view)
-
-            lastUploadPref = clickable(
-                title = R.string.last_upload,
-                icon = R.drawable.ic_baseline_info,
-            )
-            lastUploadPref.view.isClickable = false
-            lastUploadPref.view.isFocusable = false
-            extraViews.add(lastUploadPref.view)
-            patchUploadStatus()
-
-            val nowPref = clickable(
-                title = R.string.upload_now,
-                icon = R.drawable.ic_baseline_send,
-            ) {
-                clicked {
-                    requests.trySend(Request.UploadNow)
+                val autoPref = switch(
+                    value = telegram::autoUpload,
+                    icon = R.drawable.ic_baseline_publish,
+                    title = R.string.auto_upload,
+                    summary = R.string.auto_upload_summary,
+                ) {
+                    listener = OnChangedListener { patchUploadStatus() }
                 }
-            }
-            extraViews.add(nowPref.view)
+                extraViews.add(autoPref.view)
 
-            testPref = clickable(
-                title = R.string.test_connection,
-                summary = R.string.test_connection_summary,
-                icon = R.drawable.ic_baseline_send,
-            ) {
-                clicked {
-                    requests.trySend(Request.TestConnection)
+                val intervalPref = selectableList(
+                    value = telegram::uploadInterval,
+                    values = TelegramStore.UploadInterval.values(),
+                    valuesText = arrayOf(
+                        R.string.upload_interval_6h,
+                        R.string.upload_interval_12h,
+                        R.string.upload_interval_24h,
+                    ),
+                    icon = R.drawable.ic_baseline_update,
+                    title = R.string.upload_interval,
+                ) {
+                    listener = OnChangedListener { patchUploadStatus() }
                 }
-            }
-            extraViews.add(testPref.view)
+                extraViews.add(intervalPref.view)
 
-            showTelegramExtras(telegram.botToken.trim().isNotEmpty())
+                val stallPref = switch(
+                    value = telegram::uploadOnStall,
+                    icon = R.drawable.ic_baseline_flash_on,
+                    title = R.string.upload_on_stall,
+                    summary = R.string.upload_on_stall_summary,
+                )
+                extraViews.add(stallPref.view)
+
+                lastUploadPref = clickable(
+                    title = R.string.last_upload,
+                    icon = R.drawable.ic_baseline_info,
+                )
+                lastUploadPref.view.isClickable = false
+                lastUploadPref.view.isFocusable = false
+                extraViews.add(lastUploadPref.view)
+                patchUploadStatus()
+
+                val nowPref = clickable(
+                    title = R.string.upload_now,
+                    icon = R.drawable.ic_baseline_send,
+                ) {
+                    clicked {
+                        requests.trySend(Request.UploadNow)
+                    }
+                }
+                extraViews.add(nowPref.view)
+
+                testPref = clickable(
+                    title = R.string.test_connection,
+                    summary = R.string.test_connection_summary,
+                    icon = R.drawable.ic_baseline_send,
+                ) {
+                    clicked {
+                        requests.trySend(Request.TestConnection)
+                    }
+                }
+                extraViews.add(testPref.view)
+
+                showTelegramExtras(telegram.botToken.trim().isNotEmpty())
+            }
         }
 
         binding.content.addView(screen.root)

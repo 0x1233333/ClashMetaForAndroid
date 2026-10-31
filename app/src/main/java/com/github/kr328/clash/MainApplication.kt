@@ -33,44 +33,50 @@ class MainApplication : Application() {
         // 主进程也起一个内存采集:跨进程读 /proc/<pid>/status 在 Android 11+ 被拦,
         // 只在 :background 里采的话, 主进程那一侧的 RSS 永远是 null。
         // 每行带 self 字段区分来源;隧道没起时自动跳过内核探测,开销可以忽略。
-        try {
-            com.github.kr328.clash.diag.MemSampler.start(this)
-        } catch (e: Exception) {
-        }
-
-
-        // 记下这一条,再把同一个异常交给原来的 handler。记录失败也不能把崩溃吃掉。
-        val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
-        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+        if (com.github.kr328.clash.diag.DiagConfig.ENABLED) {
             try {
-                CrashCapture.record(this, thread, throwable)
-            } catch (_: Throwable) {
-            }
-            if (previousHandler != null) {
-                previousHandler.uncaughtException(thread, throwable)
-            } else {
-                Process.killProcess(Process.myPid())
-                exitProcess(10)
+                com.github.kr328.clash.diag.MemSampler.start(this)
+            } catch (e: Exception) {
             }
         }
-        CrashCapture.watch(this)
 
-        // 启动自愈:采集文件若因轮转失败越过上限,这里无条件截断,避免采集永久停更
-        com.github.kr328.clash.diag.DiagStore.selfHealAll(this)
 
-        // 后台进程里 ClashService / TunService 起来之前装上钩子。不在这里 start。
-        TunnelDiag.hooks = object : TunnelDiag.Hooks {
-            override fun start(context: Context) {
-                RoutingSampler.start(context)
-                KernelCapture.startIfEnabled(context)
+        // 发行版: DiagConfig.ENABLED=false 时整段不执行 —— 不挂崩溃采集、不自愈、不装隧道钩子、
+        // 也就是没有任何后台采样与上传。开发版把它改回 true 即恢复全部能力。
+        if (com.github.kr328.clash.diag.DiagConfig.ENABLED) {
+            // 记下这一条,再把同一个异常交给原来的 handler。记录失败也不能把崩溃吃掉。
+            val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+                try {
+                    CrashCapture.record(this, thread, throwable)
+                } catch (_: Throwable) {
+                }
+                if (previousHandler != null) {
+                    previousHandler.uncaughtException(thread, throwable)
+                } else {
+                    Process.killProcess(Process.myPid())
+                    exitProcess(10)
+                }
             }
+            CrashCapture.watch(this)
 
-            override fun stop() {
-                RoutingSampler.stop()
-            }
+            // 启动自愈:采集文件若因轮转失败越过上限,这里无条件截断,避免采集永久停更
+            com.github.kr328.clash.diag.DiagStore.selfHealAll(this)
 
-            override fun onHealthTick(context: Context) {
-                AutoUploader.tick(context)
+            // 后台进程里 ClashService / TunService 起来之前装上钩子。不在这里 start。
+            TunnelDiag.hooks = object : TunnelDiag.Hooks {
+                override fun start(context: Context) {
+                    RoutingSampler.start(context)
+                    KernelCapture.startIfEnabled(context)
+                }
+
+                override fun stop() {
+                    RoutingSampler.stop()
+                }
+
+                override fun onHealthTick(context: Context) {
+                    AutoUploader.tick(context)
+                }
             }
         }
 
